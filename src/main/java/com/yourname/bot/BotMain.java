@@ -2,67 +2,50 @@ package com.yourname.bot;
 
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
-import com.pengrad.telegrambot.request.SendMessage;
+import com.pengrad.telegrambot.request.SendPhoto;
+import com.pengrad.telegrambot.response.SendResponse;
 import com.pengrad.telegrambot.UpdatesListener;
-import com.sun.net.httpserver.HttpServer;
-
-import java.net.InetSocketAddress;
+import spark.Spark;
 
 public class BotMain {
 
     public static void main(String[] args) {
-        // Read token from environment
-        String token = System.getenv("BOT_TOKEN");
-        if (token == null || token.isEmpty()) {
-            System.err.println("BOT_TOKEN environment variable is not set. Exiting.");
-            return;
-        }
+        // Load environment variables
+        String botToken = System.getenv("BOT_TOKEN");
+        String webhookUrl = System.getenv("WEBHOOK_URL"); // New webhook URL
+        String portEnv = System.getenv("PORT");
+        int port = (portEnv != null) ? Integer.parseInt(portEnv) : 10000;
 
-        // Small HTTP endpoint to bind to Render's PORT (optional but recommended)
-        // It prevents "no open ports detected" warnings and keeps the web service happy.
-        // If you already plan to run as a Background Worker (paid on Render), you can remove this block.
-        try {
-            String portEnv = System.getenv().getOrDefault("PORT", "8080");
-            int port = Integer.parseInt(portEnv);
-            HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-            server.createContext("/", exchange -> {
-                String response = "OK";
-                exchange.sendResponseHeaders(200, response.length());
-                exchange.getResponseBody().write(response.getBytes());
-                exchange.close();
-            });
-            server.setExecutor(null);
-            server.start();
-            System.out.println("HTTP status endpoint started on port " + port);
-        } catch (Exception e) {
-            // If it fails (no permission or other), we continue — binding is optional
-            System.err.println("HTTP status endpoint not started: " + e.getMessage());
-        }
+        // Initialize the bot
+        TelegramBot bot = new TelegramBot(botToken);
 
-        // Create bot
-        TelegramBot bot = new TelegramBot(token);
-
-        // Updates listener — handle incoming messages
+        // Set the bot’s webhook URL for Telegram
         bot.setUpdatesListener(updates -> {
-            for (Update update : updates) {
-                try {
-                    if (update.message() != null && update.message().text() != null) {
-                        String chatId = update.message().chat().id().toString();
-                        String text = update.message().text();
+            // We'll handle updates via Spark webhook instead of long polling
+            return UpdatesListener.CONFIRMED_UPDATES_NONE;
+        });
 
-                        if (text.equalsIgnoreCase("/start")) {
-                            bot.execute(new SendMessage(chatId, "🚀"));
-                        } else {
-                            bot.execute(new SendMessage(chatId, "You said: " + text));
-                        }
-                    }
-                } catch (Exception ex) {
-                    // Protect the listener loop from crashing on a single message
-                    System.err.println("Error processing update: " + ex.getMessage());
+        // Start Spark HTTP server for Render compatibility
+        Spark.port(port);
+        Spark.get("/", (req, res) -> "Bot is running..."); // Simple endpoint for Render health
+
+        Spark.post("/" + botToken, (req, res) -> {
+            // Telegram sends updates to this webhook
+            Update update = TelegramBot.parseUpdate(req.body());
+            
+            if (update.message() != null && update.message().text() != null) {
+                String text = update.message().text();
+
+                if (text.equals("/start")) {
+                    // Example: send rocket image
+                    SendPhoto message = new SendPhoto(update.message().chat().id(),
+                            "https://i.imgur.com/rocket.png"); // Replace with your rocket image URL
+                    SendResponse response = bot.execute(message);
                 }
             }
-            // Use the library's constant (current API) to confirm updates
-            return UpdatesListener.CONFIRMED_UPDATES_ALL;
+
+            res.status(200);
+            return "OK";
         });
 
         System.out.println("Bot is running...");
