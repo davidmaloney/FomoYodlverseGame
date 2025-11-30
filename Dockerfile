@@ -7,7 +7,7 @@ WORKDIR /app
 # Copy pom.xml first for dependency caching
 COPY pom.xml .
 
-# Install dependencies (without go-offline)
+# Install dependencies and build the project
 RUN mvn clean package -DskipTests
 
 # Copy the source code
