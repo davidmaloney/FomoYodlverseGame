@@ -17,6 +17,14 @@
         <maven.compiler.target>17</maven.compiler.target>
     </properties>
 
+    <repositories>
+        <!-- Explicitly add Maven Central (optional, but helps in some environments) -->
+        <repository>
+            <id>central</id>
+            <url>https://repo.maven.apache.org/maven2</url>
+        </repository>
+    </repositories>
+
     <dependencies>
         <!-- Telegram Bot Java library -->
         <dependency>
@@ -24,6 +32,7 @@
             <artifactId>telegrambots</artifactId>
             <version>6.7.0</version>
         </dependency>
+        <!-- Correct artifact for extensions -->
         <dependency>
             <groupId>org.telegram</groupId>
             <artifactId>telegrambots-extensions</artifactId>
