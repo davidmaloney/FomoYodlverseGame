@@ -14,11 +14,11 @@
     </properties>
 
     <dependencies>
-        <!-- Telegram Bot API stable version -->
+        <!-- Telegram Bot API -->
         <dependency>
             <groupId>com.github.pengrad</groupId>
             <artifactId>java-telegram-bot-api</artifactId>
-            <version>5.7.1</version>
+            <version>7.1.0</version>
         </dependency>
 
         <!-- Spark Java for webhook HTTP endpoint -->
@@ -50,4 +50,5 @@
             </plugin>
         </plugins>
     </build>
+
 </project>
