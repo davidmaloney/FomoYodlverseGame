@@ -34,7 +34,7 @@
     <!-- Dependencies Section -->
     <!-- =========================== -->
     <dependencies>
-        <!-- TelegramBots library with extensions -->
+        <!-- TelegramBots library (with extensions) via JitPack -->
         <dependency>
             <groupId>com.github.rubenlagus</groupId>
             <artifactId>TelegramBots</artifactId>
