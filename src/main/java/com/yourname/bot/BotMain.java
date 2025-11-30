@@ -4,6 +4,7 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendPhoto;
 import com.pengrad.telegrambot.response.SendResponse;
+import com.pengrad.telegrambot.UpdatesListener;
 
 import static spark.Spark.*;
 
@@ -30,19 +31,26 @@ public class BotMain {
 
         TelegramBot bot = new TelegramBot(botToken);
 
-        // Webhook endpoint for Telegram
-        post("/" + botToken, (req, res) -> {
-            Update update = TelegramBot.parseUpdate(req.body());
-            if (update.message() != null && update.message().text() != null) {
-                String text = update.message().text();
-                if (text.equals("/start")) {
-                    // Send a rocket image
-                    SendResponse response = bot.execute(new SendPhoto(
-                        update.message().chat().id(),
-                        "https://i.imgur.com/6YVwTgR.png"
-                    ));
+        // Set the webhook URL
+        String webhookUrl = "https://fomoyodlversegame-1.onrender.com/" + botToken;
+        bot.setUpdatesListener(updates -> {
+            for (Update update : updates) {
+                if (update.message() != null && update.message().text() != null) {
+                    String text = update.message().text();
+
+                    if (text.equals("/start")) {
+                        // Send a rocket image
+                        SendResponse response = bot.execute(new SendPhoto(update.message().chat().id(),
+                                "https://i.imgur.com/6YVwTgR.png")); // example rocket image URL
+                    }
                 }
             }
+            return UpdatesListener.CONFIRMED_UPDATES_ALL;
+        });
+
+        // Webhook endpoint for Telegram
+        post("/" + botToken, (req, res) -> {
+            bot.process(req.body());
             return "OK";
         });
     }
