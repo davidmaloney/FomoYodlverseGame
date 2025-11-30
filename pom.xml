@@ -12,33 +12,17 @@
     <name>FOMOYodelBot</name>
     <description>Telegram bot for FOMO Yodel game</description>
 
-    <!-- =========================== -->
-    <!-- Properties Section -->
-    <!-- =========================== -->
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
     </properties>
 
-    <!-- =========================== -->
-    <!-- JitPack Repository -->
-    <!-- =========================== -->
-    <repositories>
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://jitpack.io</url>
-        </repository>
-    </repositories>
-
-    <!-- =========================== -->
-    <!-- Dependencies Section -->
-    <!-- =========================== -->
     <dependencies>
-        <!-- TelegramBots library (with extensions) via JitPack -->
+        <!-- Pengrad Telegram Bot library -->
         <dependency>
-            <groupId>com.github.rubenlagus</groupId>
-            <artifactId>TelegramBots</artifactId>
-            <version>6.7.0</version>
+            <groupId>com.github.pengrad</groupId>
+            <artifactId>java-telegram-bot-api</artifactId>
+            <version>5.8.0</version>
         </dependency>
     </dependencies>
 </project>
