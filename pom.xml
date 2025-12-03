@@ -21,21 +21,21 @@
             <version>5.7.1</version>
         </dependency>
 
-        <!-- Spark Java for webhook HTTP endpoint -->
+        <!-- Spark Java for Webhook endpoint -->
         <dependency>
             <groupId>com.sparkjava</groupId>
             <artifactId>spark-core</artifactId>
             <version>2.9.4</version>
         </dependency>
 
-        <!-- Jackson Databind for JSON handling -->
+        <!-- Jackson JSON for processing -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.15.2</version>
         </dependency>
 
-        <!-- Logging (optional but recommended) -->
+        <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
@@ -45,7 +45,6 @@
 
     <build>
         <plugins>
-            <!-- Compiler plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -53,6 +52,7 @@
                 <configuration>
                     <source>17</source>
                     <target>17</target>
+                    <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
         </plugins>
