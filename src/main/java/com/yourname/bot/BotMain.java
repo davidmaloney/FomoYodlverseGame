@@ -1,65 +1,57 @@
 package com.yourname.bot;
 
-import static spark.Spark.*;
-
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
-import com.pengrad.telegrambot.request.SendMessage;
+import com.pengrad.telegrambot.request.SendPhoto;
+import com.pengrad.telegrambot.response.SendResponse;
 import com.pengrad.telegrambot.UpdatesListener;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import static spark.Spark.*;
 
 public class BotMain {
 
     public static void main(String[] args) {
 
-        // Get bot token from environment (Render → Environment)
-        String token = System.getenv("BOT_TOKEN");
-        if (token == null || token.isEmpty()) {
-            System.out.println("ERROR: BOT_TOKEN is missing!");
-            return;
+        // Set port from Render environment or default
+        int portNumber = 10000;
+        if (System.getenv("PORT") != null) {
+            portNumber = Integer.parseInt(System.getenv("PORT"));
+        }
+        port(portNumber);
+
+        // Health check endpoint for Render
+        get("/", (req, res) -> "Bot is running...");
+
+        // Initialize bot with token from environment
+        String botToken = System.getenv("BOT_TOKEN");
+        if (botToken == null || botToken.isEmpty()) {
+            System.err.println("Error: BOT_TOKEN environment variable not set!");
+            System.exit(1);
         }
 
-        TelegramBot bot = new TelegramBot(token);
+        TelegramBot bot = new TelegramBot(botToken);
 
-        // Start Spark server (Render uses port from $PORT)
-        port(getHerokuAssignedPort());
-
-        // Health check
-        get("/", (req, res) -> "OK");
-
-        // Webhook endpoint
-        post("/webhook", (req, res) -> {
-            try {
-                ObjectMapper mapper = new ObjectMapper();
-                Update update = mapper.readValue(req.body(), Update.class);
-
+        // Set the webhook URL (replace with your actual Render service URL)
+        String webhookUrl = "https://fomoyodlversegame-1.onrender.com/" + botToken;
+        bot.setUpdatesListener(updates -> {
+            for (Update update : updates) {
                 if (update.message() != null && update.message().text() != null) {
-                    long chatId = update.message().chat().id();
                     String text = update.message().text();
 
-                    // Simple reply — SAFE minimal version
-                    bot.execute(new SendMessage(chatId, "Bot is alive! You wrote: " + text));
+                    if (text.equals("/start")) {
+                        // Send a rocket image
+                        SendResponse response = bot.execute(new SendPhoto(update.message().chat().id(),
+                                "https://i.imgur.com/6YVwTgR.png"));
+                    }
                 }
-
-            } catch (Exception e) {
-                e.printStackTrace();
             }
-            return "OK";
+            return UpdatesListener.CONFIRMED_UPDATES_ALL;
         });
 
-        // Important: keep alive listener to avoid shutdown
-        bot.setUpdatesListener(updates -> UpdatesListener.CONFIRMED_UPDATES_ALL);
-
-        System.out.println("Bot is running.");
-    }
-
-    // Render / Heroku dynamic port handling
-    static int getHerokuAssignedPort() {
-        String port = System.getenv("PORT");
-        if (port != null) {
-            return Integer.parseInt(port);
-        }
-        return 4567; // default local run
+        // Webhook endpoint for Telegram
+        post("/" + botToken, (req, res) -> {
+            bot.process(req.body());
+            return "OK";
+        });
     }
 }
