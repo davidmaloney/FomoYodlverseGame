@@ -1,93 +1,65 @@
 package com.yourname.bot;
 
-import com.pengrad.telegrambot.TelegramBot;
-import com.pengrad.telegrambot.BotUtils;
-import com.pengrad.telegrambot.model.Update;
-import com.pengrad.telegrambot.request.SendPhoto;
-import com.pengrad.telegrambot.request.SendMessage;
-import com.pengrad.telegrambot.request.SetWebhook;
-import com.pengrad.telegrambot.response.SendResponse;
-
 import static spark.Spark.*;
+
+import com.pengrad.telegrambot.TelegramBot;
+import com.pengrad.telegrambot.model.Update;
+import com.pengrad.telegrambot.request.SendMessage;
+import com.pengrad.telegrambot.UpdatesListener;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class BotMain {
 
     public static void main(String[] args) {
-        // Use Render's PORT environment variable if present
-        int portNumber = 10000;
-        String portEnv = System.getenv("PORT");
-        if (portEnv != null && !portEnv.isEmpty()) {
+
+        // Get bot token from environment (Render → Environment)
+        String token = System.getenv("BOT_TOKEN");
+        if (token == null || token.isEmpty()) {
+            System.out.println("ERROR: BOT_TOKEN is missing!");
+            return;
+        }
+
+        TelegramBot bot = new TelegramBot(token);
+
+        // Start Spark server (Render uses port from $PORT)
+        port(getHerokuAssignedPort());
+
+        // Health check
+        get("/", (req, res) -> "OK");
+
+        // Webhook endpoint
+        post("/webhook", (req, res) -> {
             try {
-                portNumber = Integer.parseInt(portEnv);
-            } catch (NumberFormatException ignored) {}
-        }
-        port(portNumber);
+                ObjectMapper mapper = new ObjectMapper();
+                Update update = mapper.readValue(req.body(), Update.class);
 
-        // Basic health check for Render
-        get("/", (req, res) -> "Bot is running...");
+                if (update.message() != null && update.message().text() != null) {
+                    long chatId = update.message().chat().id();
+                    String text = update.message().text();
 
-        // Read token from environment (do NOT hardcode token)
-        String botToken = System.getenv("BOT_TOKEN");
-        if (botToken == null || botToken.isEmpty()) {
-            System.err.println("BOT_TOKEN is not set. Exiting.");
-            System.exit(1);
-        }
+                    // Simple reply — SAFE minimal version
+                    bot.execute(new SendMessage(chatId, "Bot is alive! You wrote: " + text));
+                }
 
-        // Create bot instance
-        TelegramBot bot = new TelegramBot(botToken);
-
-        // (Optional) set webhook at startup if you prefer the bot to request it itself.
-        // If you prefer to set webhook manually using Telegram API /setWebhook, you can skip this.
-        String serviceUrl = System.getenv("RENDER_EXTERNAL_URL"); // optional: if you set it as env var
-        if (serviceUrl != null && !serviceUrl.isEmpty()) {
-            String webhookUrl = serviceUrl + "/" + botToken;
-            bot.execute(new SetWebhook().url(webhookUrl));
-            System.out.println("Requested setWebhook -> " + webhookUrl);
-        }
-
-        // Webhook endpoint: Telegram will POST JSON to https://your-service/<BOT_TOKEN>
-        post("/" + botToken, (req, res) -> {
-            String body = req.body();
-            if (body == null || body.isEmpty()) {
-                res.status(400);
-                return "Empty";
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-            // Parse incoming JSON into Update object
-            Update update = BotUtils.parseUpdate(body);
-            if (update != null) {
-                handleUpdate(bot, update);
-            }
-            res.status(200);
             return "OK";
         });
 
-        System.out.println("Webhook endpoint ready on port " + portNumber);
+        // Important: keep alive listener to avoid shutdown
+        bot.setUpdatesListener(updates -> UpdatesListener.CONFIRMED_UPDATES_ALL);
+
+        System.out.println("Bot is running.");
     }
 
-    private static void handleUpdate(TelegramBot bot, Update update) {
-        try {
-            if (update.message() != null && update.message().text() != null) {
-                String text = update.message().text();
-                long chatId = update.message().chat().id();
-
-                if (text.equalsIgnoreCase("/start")) {
-                    // Example: send photo when user starts
-                    SendResponse resp = bot.execute(new SendPhoto(chatId,
-                            "https://i.imgur.com/6YVwTgR.png"));
-                    if (!resp.isOk()) {
-                        System.err.println("SendPhoto failed: " + resp.description());
-                    }
-                } else {
-                    SendResponse resp = bot.execute(new SendMessage(chatId, "You said: " + text));
-                    if (!resp.isOk()) {
-                        System.err.println("SendMessage failed: " + resp.description());
-                    }
-                }
-            }
-
-            // handle other update types (callback_query, inline, etc.) later
-        } catch (Exception e) {
-            e.printStackTrace();
+    // Render / Heroku dynamic port handling
+    static int getHerokuAssignedPort() {
+        String port = System.getenv("PORT");
+        if (port != null) {
+            return Integer.parseInt(port);
         }
+        return 4567; // default local run
     }
 }
