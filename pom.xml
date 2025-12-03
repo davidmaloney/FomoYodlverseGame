@@ -7,6 +7,7 @@
     <groupId>com.yourname.bot</groupId>
     <artifactId>FOMOYodelBot</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
@@ -18,24 +19,17 @@
         <dependency>
             <groupId>com.github.pengrad</groupId>
             <artifactId>java-telegram-bot-api</artifactId>
-            <version>5.6.0</version> <!-- Previously verified working version -->
+            <version>5.7.1</version>
         </dependency>
 
-        <!-- Spark Java for webhook HTTP endpoint -->
+        <!-- Spark Framework -->
         <dependency>
             <groupId>com.sparkjava</groupId>
             <artifactId>spark-core</artifactId>
             <version>2.9.4</version>
         </dependency>
 
-        <!-- Logging (optional but recommended) -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.9</version>
-        </dependency>
-
-        <!-- Jackson for JSON handling (required by Telegram API) -->
+        <!-- Jackson for JSON processing -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -56,7 +50,7 @@
                 </configuration>
             </plugin>
 
-            <!-- Maven Shade Plugin to create a fat JAR -->
+            <!-- Maven Shade Plugin for fat JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
