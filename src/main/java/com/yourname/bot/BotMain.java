@@ -2,52 +2,47 @@ package com.yourname.bot;
 
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
-import com.pengrad.telegrambot.request.SendPhoto;
+import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.response.SendResponse;
-import com.pengrad.telegrambot.UpdatesListener;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import static spark.Spark.*;
 
 public class BotMain {
 
+    private static final String BOT_TOKEN = System.getenv("BOT_TOKEN"); // Use environment variable on Render
+    private static final int PORT = 4567;
+
+    private static final TelegramBot bot = new TelegramBot(BOT_TOKEN);
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     public static void main(String[] args) {
+        port(PORT);
+        get("/", (req, res) -> "Bot is running.");
 
-        int portNumber = 10000;
-        if (System.getenv("PORT") != null) {
-            portNumber = Integer.parseInt(System.getenv("PORT"));
-        }
-        port(portNumber);
-
-        // Health check endpoint
-        get("/", (req, res) -> "Bot is running...");
-
-        String botToken = System.getenv("BOT_TOKEN");
-        if (botToken == null || botToken.isEmpty()) {
-            System.err.println("Error: BOT_TOKEN environment variable not set!");
-            System.exit(1);
-        }
-
-        TelegramBot bot = new TelegramBot(botToken);
-
-        // Updates listener
-        bot.setUpdatesListener(updates -> {
-            for (Update update : updates) {
-                if (update.message() != null && update.message().text() != null) {
-                    String text = update.message().text();
-                    if (text.equals("/start")) {
-                        SendResponse response = bot.execute(new SendPhoto(
-                                update.message().chat().id(),
-                                "https://i.imgur.com/6YVwTgR.png"
-                        ));
-                    }
-                }
+        post("/webhook", (req, res) -> {
+            String body = req.body();
+            try {
+                JsonNode updateJson = objectMapper.readTree(body);
+                handleUpdate(updateJson);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-            return UpdatesListener.CONFIRMED_UPDATES_ALL;
-        });
-
-        // Webhook endpoint
-        post("/" + botToken, (req, res) -> {
-            bot.process(req.body());
+            res.status(200);
             return "OK";
         });
+
+        System.out.println("Bot webhook server is running on port " + PORT);
+    }
+
+    private static void handleUpdate(JsonNode update) {
+        if (update.has("message") && update.get("message").has("text")) {
+            String chatId = update.get("message").get("chat").get("id").asText();
+            String messageText = update.get("message").get("text").asText();
+
+            SendMessage request = new SendMessage(chatId, "You said: " + messageText);
+            SendResponse response = bot.execute(request);
+        }
     }
 }
