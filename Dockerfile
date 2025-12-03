@@ -1,32 +1,13 @@
-# Use an official Maven + JDK image
-FROM maven:3.9.3-eclipse-temurin-17 AS build
-
-# Set working directory
+FROM maven:3.9.6-eclipse-temurin-17 AS build
 WORKDIR /app
-
-# Copy pom.xml first for dependency caching
 COPY pom.xml .
-
-# Install dependencies and build the project
-RUN mvn clean package -DskipTests
-
-# Copy the source code
 COPY src ./src
+RUN mvn -e -X -DskipTests package
 
-# Build the project
-RUN mvn clean package -DskipTests
-
-# Run stage
-FROM eclipse-temurin:17-jdk-jammy
-
-# Set working directory
+FROM eclipse-temurin:17-jre
 WORKDIR /app
+COPY --from=build /app/target/FOMOYodelBot-1.0-SNAPSHOT.jar app.jar
 
-# Copy built jar from build stage
-COPY --from=build /app/target/FOMOYodelBot-1.0-SNAPSHOT.jar ./FOMOYodelBot.jar
+EXPOSE 4567
 
-# Expose port for Render HTTP endpoint
-EXPOSE 10000
-
-# Command to run bot
-CMD ["java", "-jar", "FOMOYodelBot.jar"]
+CMD ["java", "-jar", "app.jar"]
