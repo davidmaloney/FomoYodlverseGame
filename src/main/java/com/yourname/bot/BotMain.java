@@ -1,55 +1,39 @@
 package com.yourname.bot;
 
-import static spark.Spark.*;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.request.SendMessage;
+import com.pengrad.telegrambot.response.SendResponse;
+import com.pengrad.telegrambot.UpdatesListener;
 
 public class BotMain {
 
     public static void main(String[] args) {
-        String botToken = System.getenv("BOT_TOKEN");
-        if (botToken == null || botToken.isEmpty()) {
-            System.err.println("ERROR: BOT_TOKEN environment variable is not set!");
+
+        // Load token from environment variable on Render
+        String token = System.getenv("BOT_TOKEN");
+        if (token == null || token.isEmpty()) {
+            System.out.println("ERROR: BOT_TOKEN is missing");
             return;
         }
 
-        TelegramBot bot = new TelegramBot(botToken);
+        TelegramBot bot = new TelegramBot(token);
 
-        port(4567);
-
-        // Health Check
-        get("/health", (req, res) -> {
-            res.type("application/json");
-            return "{\"status\":\"healthy\"}";
-        });
-
-        // Webhook Handler
-        post("/webhook", (req, res) -> {
-            try {
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode json = mapper.readTree(req.body());
-
-                Update update = mapper.convertValue(json, Update.class);
-
+        // Listen for updates
+        bot.setUpdatesListener(updates -> {
+            for (Update update : updates) {
                 if (update.message() != null && update.message().text() != null) {
                     long chatId = update.message().chat().id();
                     String text = update.message().text();
 
-                    bot.execute(new SendMessage(chatId, "You said: " + text));
+                    // Simple echo test so we know bot is working
+                    SendResponse response = bot.execute(new SendMessage(chatId, "You said: " + text));
+                    System.out.println("Message sent: " + response.isOk());
                 }
-
-            } catch (Exception e) {
-                e.printStackTrace();
             }
-
-            return "OK";
+            return UpdatesListener.CONFIRMED_UPDATES_ALL;
         });
 
-        System.out.println("Bot server running on port 4567...");
+        System.out.println("Bot is running...");
     }
 }
