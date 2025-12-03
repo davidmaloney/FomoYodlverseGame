@@ -18,7 +18,7 @@
         <dependency>
             <groupId>com.github.pengrad</groupId>
             <artifactId>java-telegram-bot-api</artifactId>
-            <version>5.7.1</version>
+            <version>5.7.0</version>
         </dependency>
 
         <!-- Spark Java for webhook HTTP endpoint -->
@@ -35,7 +35,7 @@
             <version>2.0.9</version>
         </dependency>
 
-        <!-- Jackson for JSON parsing -->
+        <!-- Jackson Databind for JSON parsing -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
@@ -53,20 +53,6 @@
                 <configuration>
                     <source>17</source>
                     <target>17</target>
-                </configuration>
-            </plugin>
-
-            <!-- Jar plugin to set main class -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>com.yourname.bot.BotMain</mainClass>
-                        </manifest>
-                    </archive>
                 </configuration>
             </plugin>
         </plugins>
