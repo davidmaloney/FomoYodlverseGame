@@ -1,25 +1,32 @@
-# Build stage: maven + JDK 17
+# Use an official Maven + JDK image
 FROM maven:3.9.3-eclipse-temurin-17 AS build
+
+# Set working directory
 WORKDIR /app
 
-# Copy pom first to leverage caching for dependencies
-COPY pom.xml ./
+# Copy pom.xml first for dependency caching
+COPY pom.xml .
 
-# Download dependencies and build (skip tests)
+# Install dependencies and build the project
 RUN mvn clean package -DskipTests
 
-# Copy source and build again (source may already be compiled by previous step)
+# Copy the source code
 COPY src ./src
+
+# Build the project
 RUN mvn clean package -DskipTests
 
-# Run stage: lean JRE
-FROM eclipse-temurin:17-jre
+# Run stage
+FROM eclipse-temurin:17-jdk-jammy
+
+# Set working directory
 WORKDIR /app
 
-# Copy the shaded jar produced by maven-shade plugin
-COPY --from=build /app/target/FOMOYodelBot.jar ./FOMOYodelBot.jar
+# Copy built jar from build stage
+COPY --from=build /app/target/FOMOYodelBot-1.0-SNAPSHOT.jar ./FOMOYodelBot.jar
 
-# Expose port (Render needs a port to detect web service; render sets PORT env variable)
+# Expose port for Render HTTP endpoint
 EXPOSE 10000
 
+# Command to run bot
 CMD ["java", "-jar", "FOMOYodelBot.jar"]
