@@ -1,48 +1,36 @@
-package com.yourname.bot;
+import org.telegram.telegrambots.bots.TelegramWebhookBot;
+import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import com.pengrad.telegrambot.TelegramBot;
-import com.pengrad.telegrambot.model.Update;
-import com.pengrad.telegrambot.request.SendMessage;
-import com.pengrad.telegrambot.response.SendResponse;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+public class BotMain extends TelegramWebhookBot {
 
-import static spark.Spark.*;
+    private final MasterHandler masterHandler;
 
-public class BotMain {
-
-    private static final String BOT_TOKEN = System.getenv("BOT_TOKEN"); // Use environment variable on Render
-    private static final int PORT = 4567;
-
-    private static final TelegramBot bot = new TelegramBot(BOT_TOKEN);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
-    public static void main(String[] args) {
-        port(PORT);
-        get("/", (req, res) -> "Bot is running.");
-
-        post("/webhook", (req, res) -> {
-            String body = req.body();
-            try {
-                JsonNode updateJson = objectMapper.readTree(body);
-                handleUpdate(updateJson);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            res.status(200);
-            return "OK";
-        });
-
-        System.out.println("Bot webhook server is running on port " + PORT);
+    public BotMain() {
+        this.masterHandler = new MasterHandler(); // Delegator to master
     }
 
-    private static void handleUpdate(JsonNode update) {
-        if (update.has("message") && update.get("message").has("text")) {
-            String chatId = update.get("message").get("chat").get("id").asText();
-            String messageText = update.get("message").get("text").asText();
+    @Override
+    public String getBotUsername() {
+        return "FOMOYodlVerseBot"; // Replace with your bot's exact username
+    }
 
-            SendMessage request = new SendMessage(chatId, "You said: " + messageText);
-            SendResponse response = bot.execute(request);
+    @Override
+    public String getBotToken() {
+        return "8278589036:AAGdjUb7BCQf9KtYA_fkgaopfIiEM8fH6CM"; // Your current token
+    }
+
+    @Override
+    public void onWebhookUpdateReceived(Update update) {
+        try {
+            masterHandler.handleUpdate(update); // Send everything to Master Handler
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
         }
+    }
+
+    @Override
+    public String getBotPath() {
+        return "/"; // Default webhook path
     }
 }
