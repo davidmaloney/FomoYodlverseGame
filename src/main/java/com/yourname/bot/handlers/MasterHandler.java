@@ -1,20 +1,37 @@
 package com.formalyodelversegame.bot.handlers;
 
+import com.formalyodelversegame.bot.handlers.StartHandler;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.bots.AbsSender;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
 // MasterHandler acts as the central dispatcher for all bot commands and game interactions
 public class MasterHandler {
 
-    private BaseHandler startHandler;
+    private Map<String, BaseHandler> handlerMap;
 
     public MasterHandler() {
-        // Initialize handlers
-        startHandler = new StartHandler();
+        handlerMap = new HashMap<>();
+        registerHandlers();
+    }
+
+    // Registers all handlers
+    private void registerHandlers() {
+        // Command: /start → StartHandler
+        handlerMap.put("start", new StartHandler());
+
+        // Future handlers can be added here:
+        // handlerMap.put("explore", new ExploreHandler());
+        // handlerMap.put("battle", new BattleHandler());
+        // handlerMap.put("inventory", new InventoryHandler());
+        // handlerMap.put("badge", new BadgeHandler());
     }
 
     // Entry point: called from BotMain.java
-    public void handleUpdate(Update update, AbsSender sender) {
+    public void handleUpdate(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText().trim().toLowerCase();
 
@@ -23,34 +40,33 @@ public class MasterHandler {
                 messageText = messageText.substring(1);
             }
 
-            // Route commands
-            switch (messageText) {
-                case "start":
-                    startHandler.handle(update, sender);
-                    break;
-
-                // Future commands:
-                // case "explore":
-                //     exploreHandler.handle(update, sender);
-                //     break;
-
-                default:
-                    // Send unknown command message
+            // Lookup the handler
+            BaseHandler handler = handlerMap.get(messageText);
+            if (handler != null) {
+                handler.handle(update);
+            } else {
+                // Optional: default message for unrecognized commands
+                if (update.getMessage().getChatId() != null) {
                     try {
-                        sender.execute(new org.telegram.telegrambots.meta.api.methods.send.SendMessage(
-                                update.getMessage().getChatId().toString(),
-                                "Unknown command. Use /start to begin."
-                        ));
+                        SendMessage msg = new SendMessage();
+                        msg.setChatId(update.getMessage().getChatId().toString());
+                        msg.setText("Unknown command. Use /start to begin.");
+                        new AbsSender() {
+                            @Override
+                            public String getBotToken() { return ""; }
+                            @Override
+                            public String getBotUsername() { return ""; }
+                        }.execute(msg);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
-                    break;
+                }
             }
         }
     }
 
-    // BaseHandler interface for all handlers
+    // BaseHandler interface for all future handlers
     public interface BaseHandler {
-        void handle(Update update, AbsSender sender);
+        void handle(Update update);
     }
 }
