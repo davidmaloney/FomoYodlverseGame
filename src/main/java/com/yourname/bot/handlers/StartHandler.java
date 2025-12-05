@@ -1,17 +1,16 @@
-package com.yourname.bot.handlers;
+package com.formalyodelversegame.bot.handlers;
 
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.bots.AbsSender;
 
-public class StartHandler {
+// StartHandler now implements MasterHandler.BaseHandler
+public class StartHandler implements MasterHandler.BaseHandler {
 
-    // Called by MasterHandler when /start is received
-    public void handleStart(Update update, AbsSender sender) {
-        Message message = update.getMessage();
-        if (message != null && message.hasText()) {
-            String chatId = message.getChatId().toString();
+    @Override
+    public void handle(Update update, AbsSender sender) {
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            String chatId = update.getMessage().getChatId().toString();
             String welcomeText = "🚀 Welcome to the FOMO YODLverse! " +
                     "Your adventure starts now. Use the buttons to explore, battle, and collect loot!";
 
