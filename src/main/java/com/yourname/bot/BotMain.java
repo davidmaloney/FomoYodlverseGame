@@ -1,3 +1,6 @@
+package com.formalyodelversegame.bot;
+
+import com.formalyodelversegame.bot.handlers.MasterHandler;
 import org.telegram.telegrambots.bots.TelegramWebhookBot;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
@@ -7,7 +10,7 @@ public class BotMain extends TelegramWebhookBot {
     private final MasterHandler masterHandler;
 
     public BotMain() {
-        this.masterHandler = new MasterHandler(); // Delegator to master
+        this.masterHandler = new MasterHandler(); // Delegates updates to MasterHandler
     }
 
     @Override
@@ -23,7 +26,7 @@ public class BotMain extends TelegramWebhookBot {
     @Override
     public void onWebhookUpdateReceived(Update update) {
         try {
-            masterHandler.handleUpdate(update); // Send everything to Master Handler
+            masterHandler.handleUpdate(update); // Forward updates to master handler
         } catch (TelegramApiException e) {
             e.printStackTrace();
         }
@@ -31,6 +34,6 @@ public class BotMain extends TelegramWebhookBot {
 
     @Override
     public String getBotPath() {
-        return "/"; // Default webhook path
+        return "/"; // Webhook path
     }
 }
