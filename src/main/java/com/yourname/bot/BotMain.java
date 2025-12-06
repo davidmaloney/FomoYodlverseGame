@@ -10,23 +10,24 @@ public class BotMain extends TelegramWebhookBot {
     private final MasterHandler masterHandler;
 
     public BotMain() {
-        this.masterHandler = new MasterHandler(); // Delegates updates to MasterHandler
+        this.masterHandler = new MasterHandler(); // Delegates to MasterHandler
     }
 
     @Override
     public String getBotUsername() {
-        return "FOMOYodlVerseBot"; // Replace with your bot's exact username
+        return "FOMOYodlVerseBot"; // Keep your bot’s exact username here
     }
 
     @Override
     public String getBotToken() {
-        return "8278589036:AAGdjUb7BCQf9KtYA_fkgaopfIiEM8fH6CM"; // Your current token
+        // Grab token from Render environment variable
+        return System.getenv("TELEGRAM_BOT_TOKEN");
     }
 
     @Override
     public void onWebhookUpdateReceived(Update update) {
         try {
-            masterHandler.handleUpdate(update); // Forward updates to master handler
+            masterHandler.handleUpdate(update); // Forward all updates to MasterHandler
         } catch (TelegramApiException e) {
             e.printStackTrace();
         }
@@ -34,6 +35,6 @@ public class BotMain extends TelegramWebhookBot {
 
     @Override
     public String getBotPath() {
-        return "/"; // Webhook path
+        return "/"; // Default webhook path
     }
 }
