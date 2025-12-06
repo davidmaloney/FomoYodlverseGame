@@ -1,28 +1,25 @@
 package com.formalyodelversegame.bot.handlers;
 
-import com.formalyodelversegame.bot.handlers.MasterHandler.BaseHandler;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.bots.AbsSender;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-public class StartHandler implements BaseHandler {
+public class StartHandler implements MasterHandler.BaseHandler {
 
     @Override
-    public void handle(Update update, AbsSender sender) {
-        if (update.getMessage() != null && update.getMessage().hasText()) {
-            String chatId = update.getMessage().getChatId().toString();
-            String welcomeText = "🚀 Welcome to the FOMO YODLverse! " +
-                    "Your adventure starts now. Use the buttons to explore, battle, and collect loot!";
+    public void handle(Update update) throws TelegramApiException {
+        SendMessage response = new SendMessage();
+        response.setChatId(update.getMessage().getChatId().toString());
+        response.setText("🚀 Welcome to the FOMO YODLverse! Your adventure starts now. Use the buttons to explore, battle, and collect loot!");
 
-            SendMessage response = new SendMessage();
-            response.setChatId(chatId);
-            response.setText(welcomeText);
-
-            try {
-                sender.execute(response);
-            } catch (Exception e) {
-                e.printStackTrace();
+        AbsSender sender = new AbsSender() {
+            @Override
+            public String getBotToken() {
+                return System.getenv("TELEGRAM_BOT_TOKEN");
             }
-        }
+        };
+
+        sender.execute(response);
     }
 }
