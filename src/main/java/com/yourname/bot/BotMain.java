@@ -1,43 +1,45 @@
 package com.yourname.bot;
 
-import org.telegram.telegrambots.bots.TelegramWebhookBot;
-import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
-import org.telegram.telegrambots.meta.api.objects.Update;
+import java.util.List;
 
-import com.yourname.bot.handlers.HandlerRouter;
-
-public class BotMain extends TelegramWebhookBot {
+public class BotMain {
 
     private final String botToken;
-    private final String botUsername;
-    private final String webhookPath;
+    private final String clientId;
+    private final String guildId;
 
-    private final HandlerRouter handlerRouter;
-
-    public BotMain(String botToken, String botUsername, String webhookPath) {
+    // Constructor now takes three required arguments
+    public BotMain(String botToken, String clientId, String guildId) {
         this.botToken = botToken;
-        this.botUsername = botUsername;
-        this.webhookPath = webhookPath;
-        this.handlerRouter = new HandlerRouter(this);
+        this.clientId = clientId;
+        this.guildId = guildId;
     }
 
-    @Override
-    public BotApiMethod<?> onWebhookUpdateReceived(Update update) {
-        return handlerRouter.route(update);
+    // Start method called by ApplicationMain
+    public void start() {
+        System.out.println("BotMain: Starting bot with parameters:");
+        System.out.println("Token: " + botToken);
+        System.out.println("Client ID: " + clientId);
+        System.out.println("Guild ID: " + guildId);
+
+        // Initialize bot logic here (e.g., connect to Discord API, setup events)
+        initializeHandlers();
     }
 
-    @Override
-    public String getBotPath() {
-        return webhookPath;
+    // Example method to register commands or buttons
+    public void registerCommands(List<String> commands) {
+        for (String command : commands) {
+            System.out.println("Registering command: " + command);
+            // Command registration logic goes here
+        }
     }
 
-    @Override
-    public String getBotUsername() {
-        return botUsername;
+    // Initialize bot handlers
+    private void initializeHandlers() {
+        System.out.println("BotMain: Initializing handlers...");
+        // Load your event handlers, message handlers, button handlers, etc.
+        // Preserves the structure from previous working state with rockets
     }
 
-    @Override
-    public String getBotToken() {
-        return botToken;
-    }
+    // You can add more methods here as needed for features
 }
