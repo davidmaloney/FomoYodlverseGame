@@ -1,30 +1,26 @@
-package com.formalyodelversegame.bot.handlers;
+package com.yourname.bot.handlers;
 
-import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.bots.AbsSender;
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.Update;
+
+import com.yourname.bot.BotMain;
 
 public class MasterHandler {
 
-    public interface BaseHandler {
-        void handle(Update update, AbsSender sender);
+    private final BotMain bot;
+
+    public MasterHandler(BotMain bot) {
+        this.bot = bot;
     }
 
-    public void handle(Update update, AbsSender sender) {
-        // Example handling: echo the message text
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String chatId = update.getMessage().getChatId().toString();
-            String receivedText = update.getMessage().getText();
+    public BotApiMethod<?> handle(Update update) {
+        Long chatId = update.getMessage().getChatId();
 
-            SendMessage response = new SendMessage();
-            response.setChatId(chatId);
-            response.setText("You said: " + receivedText);
+        SendMessage sm = new SendMessage();
+        sm.setChatId(chatId.toString());
+        sm.setText("Command not recognized — but I'm alive and working!");
 
-            try {
-                sender.execute(response);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+        return sm;
     }
 }
