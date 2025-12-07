@@ -1,26 +1,25 @@
-package com.formalyodelversegame.bot.handlers;
+package com.yourname.bot.handlers;
 
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.bots.AbsSender;
+
+import com.yourname.bot.BotMain;
 
 public class StartHandler {
 
-    public void handleStart(Update update, AbsSender sender) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String chatId = update.getMessage().getChatId().toString();
-            String welcomeText = "🚀 Welcome to the FOMO YODLverse! " +
-                    "Your adventure starts now. Use the buttons to explore, battle, and collect loot!";
+    private final BotMain bot;
 
-            SendMessage response = new SendMessage();
-            response.setChatId(chatId);
-            response.setText(welcomeText);
+    public StartHandler(BotMain bot) {
+        this.bot = bot;
+    }
 
-            try {
-                sender.execute(response);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+    public BotApiMethod<?> handle(Update update) {
+        Long chatId = update.getMessage().getChatId();
+        SendMessage sm = new SendMessage();
+        sm.setChatId(chatId.toString());
+        sm.setText("Welcome to the FomoYodlverse Game Bot! 🚀");
+
+        return sm;
     }
 }
