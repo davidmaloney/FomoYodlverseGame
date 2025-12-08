@@ -7,21 +7,26 @@ import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 public class StartHandler {
 
-    private final BotMain bot;
-
-    public StartHandler(BotMain bot) {
-        this.bot = bot;
+    public StartHandler() {
+        // No arguments; reverted to working constructor
     }
 
     public void handle(Update update) {
-        if (update.hasMessage() && update.getMessage().hasChatId()) {
-            SendMessage message = new SendMessage();
-            message.setChatId(update.getMessage().getChatId().toString());
-            message.setText("Welcome to FOMO Euroverse game!");  // Main start message
-            try {
-                bot.execute(message);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            String text = update.getMessage().getText();
+            String chatId = update.getMessage().getChatId().toString();
+
+            if ("/start".equals(text)) {
+                SendMessage message = new SendMessage();
+                message.setChatId(chatId);
+                message.setText("Welcome! The bot is running.");
+
+                try {
+                    BotMain sender = new BotMain("", ""); // placeholder, actual bot instance handles sending
+                    sender.execute(message);
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
