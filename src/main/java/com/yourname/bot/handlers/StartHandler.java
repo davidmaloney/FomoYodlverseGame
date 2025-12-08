@@ -1,27 +1,31 @@
 package com.yourname.bot.handlers;
 
-import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
-import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.objects.Update;
-
 import com.yourname.bot.BotMain;
+import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
 public class StartHandler {
 
-    private final BotMain bot;
+    public static void handleStart(Update update, BotMain bot) {
+        String chatId = update.getMessage().getChatId().toString();
+        String welcomeText = "Welcome to FOMO Euroverse game!";
 
-    public StartHandler(BotMain bot) {
-        this.bot = bot;
-    }
+        // ===== New debug snippet =====
+        System.out.println("=== StartHandler Debug ===");
+        System.out.println("ChatId: " + chatId);
+        System.out.println("Message object: " + update.getMessage());
+        System.out.println("Outgoing text: " + welcomeText);
+        System.out.println("===========================");
+        // =============================
 
-    public BotApiMethod<?> handle(Update update) {
-        Long chatId = update.getMessage().getChatId();
-        System.out.println("StartHandler triggered for chatId: " + chatId); // debug
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText(welcomeText);
 
-        SendMessage sm = new SendMessage();
-        sm.setChatId(chatId.toString());
-        sm.setText("Welcome to the FomoYodlverse Game Bot! 🚀");
-
-        return sm;
+        try {
+            bot.execute(message);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }
