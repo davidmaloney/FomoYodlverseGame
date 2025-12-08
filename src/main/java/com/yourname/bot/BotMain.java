@@ -35,27 +35,13 @@ public class BotMain extends DefaultAbsSender {
         return optionalId;
     }
 
-    // This is the debug patch to see updates flowing through the bot
+    // Handle incoming updates and forward to router
     public void handleUpdate(Update update) {
-        System.out.println("=== BotMain.handleUpdate called ===");
-
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            System.out.println("Update received! ChatId: " +
-                    update.getMessage().getChatId() + ", Text: " +
-                    update.getMessage().getText());
-        } else {
-            System.out.println("Update received with no text or message.");
-        }
-
-        System.out.println("=================================");
-
-        // Route to the appropriate handler
         BotApiMethod<?> response = router.route(update);
 
         if (response != null) {
             try {
                 execute(response);
-                System.out.println("Message sent to chatId: " + update.getMessage().getChatId());
             } catch (Exception e) {
                 e.printStackTrace();
             }
