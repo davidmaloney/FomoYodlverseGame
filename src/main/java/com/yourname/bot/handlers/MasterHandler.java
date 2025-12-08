@@ -5,10 +5,10 @@ import org.telegram.telegrambots.meta.api.objects.Update;
 public class MasterHandler {
 
     public MasterHandler() {
-        // Constructor
+        // original constructor
     }
 
     public void handle(Update update) {
-        // Original handling logic for other messages
+        System.out.println("MasterHandler received an update.");
     }
 }
