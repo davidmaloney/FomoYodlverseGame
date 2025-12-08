@@ -1,14 +1,17 @@
 package com.yourname.bot.handlers;
 
+import com.yourname.bot.BotMain;
 import org.telegram.telegrambots.meta.api.objects.Update;
 
 public class StartHandler {
 
     public StartHandler() {
-        // Constructor without arguments
+        // original constructor
     }
 
     public void handle(Update update) {
-        // Original handling logic for /start
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            System.out.println("StartHandler received message: " + update.getMessage().getText());
+        }
     }
 }
