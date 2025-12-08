@@ -1,18 +1,14 @@
 package com.yourname.bot;
 
 import com.yourname.bot.handlers.HandlerRouter;
+import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpExchange;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -21,76 +17,53 @@ import java.net.InetSocketAddress;
 public class ApplicationMain {
 
     public static void main(String[] args) throws Exception {
-
-        // ====== 1) LOAD TOKENS FROM ENV ======
-        String token = System.getenv("TELEGRAM_TOKEN");
-        String clientId = System.getenv("CLIENT_ID");
-        String guildId = System.getenv("GUILD_ID");
-
-        if (token == null || clientId == null || guildId == null) {
-            System.err.println("❌ Missing environment variables!");
-            return;
-        }
-
-        // ====== 2) INIT BOT WITH CONSTRUCTOR FIX ======
-        BotMain botInstance = new BotMain(token, clientId, guildId);
-
+        // Initialize Telegram bot API
         TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
+        BotMain botInstance = new BotMain("YOUR_BOT_NAME", "YOUR_BOT_USERNAME", System.getenv("TELEGRAM_BOT_TOKEN"));
         try {
             botsApi.registerBot(botInstance);
-            System.out.println("BotMain: Bot registered with polling successfully.");
         } catch (TelegramApiException e) {
             e.printStackTrace();
             return;
         }
 
-        // ====== 3) LOAD ROUTER ======
+        System.out.println("BotMain: Bot has started successfully.");
+
+        // Initialize HandlerRouter
         HandlerRouter router = new HandlerRouter(botInstance);
 
-        // ====== 4) START LIGHT/MEDIUM-WEIGHT WEBHOOK SERVER ======
-        int port = 10000; // Render exposes this
+        // Use Render-assigned port, fallback to 10000 if not set
+        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "10000"));
+        System.out.println("Webhook server will start on port: " + port);
+
+        // Set up simple webhook server
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-
-        // THREAD POOL — SUPPORTS **200+ concurrent players**
-        ExecutorService executor = Executors.newFixedThreadPool(50);
-        server.setExecutor(executor);
-
-        System.out.println("Webhook server binding on /webhook (port " + port + ")…");
-
-        server.createContext("/webhook", (HttpExchange exchange) -> {
-            if (!exchange.getRequestMethod().equals("POST")) {
-                exchange.sendResponseHeaders(405, -1);
-                return;
-            }
-
-            try (InputStream requestBody = exchange.getRequestBody()) {
-
-                // SAFEST JSON MAPPER FOR TELEGRAM UPDATE
+        server.createContext("/webhook", exchange -> {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                InputStream requestBody = exchange.getRequestBody();
                 ObjectMapper mapper = new ObjectMapper();
-                Update update = mapper.readValue(requestBody, Update.class);
-
-                // Forward to bot logic
-                botInstance.receiveWebhookUpdate(update);
-
-                // Existing routing system still works
-                router.route(update);
-
-                // Response
-                byte[] response = "OK".getBytes();
-                exchange.sendResponseHeaders(200, response.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response);
+                try {
+                    Update update = mapper.readValue(requestBody, Update.class);
+                    // Forward to BotMain (polling logic still works)
+                    botInstance.onWebhookUpdateReceived(update);
+                    // Route to your existing handlers
+                    router.route(update);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                } finally {
+                    String response = "OK";
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+                    OutputStream os = exchange.getResponseBody();
+                    os.write(response.getBytes());
+                    os.close();
                 }
-
-            } catch (Exception ex) {
-                ex.printStackTrace();
-                exchange.sendResponseHeaders(500, -1);
+            } else {
+                exchange.sendResponseHeaders(405, -1); // Method not allowed
             }
         });
 
         server.start();
-        System.out.println("Webhook server running at https://YOUR-RENDER-URL/webhook");
-        System.out.println("Polling + Webhook hybrid mode active.");
-        System.out.println("Bot is fully operational.");
+        System.out.println("Webhook server started on port " + port);
+        System.out.println("Bot service is live! Webhook available at /webhook");
     }
 }
