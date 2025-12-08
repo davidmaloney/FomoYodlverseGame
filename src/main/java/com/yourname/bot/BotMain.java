@@ -1,55 +1,23 @@
 package com.yourname.bot;
 
-import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import com.yourname.bot.handlers.HandlerRouter;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
-public class BotMain extends TelegramLongPollingBot {
+public class BotMain {
+    private final HandlerRouter router;
 
-    private final String token;
-    private final String clientId;
-    private final String guildId;
-
-    // Constructor with parameters for ApplicationMain to call
-    public BotMain(String token, String clientId, String guildId) {
-        this.token = token;
-        this.clientId = clientId;
-        this.guildId = guildId;
+    // Constructor now receives token/name if needed in future
+    public BotMain(String botToken, String botUsername, String botOwner) {
+        this.router = new HandlerRouter(this);
+        // Any additional initialization if needed
     }
 
-    @Override
-    public void onUpdateReceived(Update update) {
-        // Normal polling logic: handle messages and commands
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String chatId = update.getMessage().getChatId().toString();
-            String text = update.getMessage().getText();
-
-            SendMessage message = new SendMessage();
-            message.setChatId(chatId);
-            message.setText("Echo: " + text);
-
-            try {
-                execute(message);
-            } catch (TelegramApiException e) {
-                e.printStackTrace();
-            }
+    // Method to process updates coming from webhook
+    public void handleUpdate(Update update) {
+        try {
+            router.route(update); // Existing routing logic
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-    }
-
-    @Override
-    public String getBotUsername() {
-        return clientId; // Or your bot username if needed
-    }
-
-    @Override
-    public String getBotToken() {
-        return token;
-    }
-
-    // Optional: helper to safely receive updates from ApplicationMain webhook
-    public void receiveWebhookUpdate(Update update) {
-        // Forward updates to normal polling logic if needed
-        onUpdateReceived(update);
     }
 }
