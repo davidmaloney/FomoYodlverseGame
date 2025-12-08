@@ -1,30 +1,46 @@
 package com.yourname.bot;
 
-import com.yourname.bot.handlers.HandlerRouter;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.HttpServer;
 import org.telegram.telegrambots.meta.api.objects.Update;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
+import static spark.Spark.*;
 
 public class ApplicationMain {
 
-    public static void main(String[] args) throws Exception {
-        // Read port from environment or default to 10000
-        int port = 10000;
-        String portEnv = System.getenv("WEBHOOK_PORT");
-        if (portEnv != null && !portEnv.isEmpty()) {
-            try {
-                port = Integer.parseInt(portEnv);
-            } catch (NumberFormatException e) {
-                System.err.println("Invalid WEBHOOK_PORT, using default 10000");
-            }
-        }
-
-        // Initialize BotMain with placeholders
+    public static void main(String[] args) {
+        // Read environment variables
+        String botName = System.getenv("TELEGRAM_BOT_NAME");
         String botToken = System.getenv("TELEGRAM_BOT_TOKEN");
-        String botUsername = "FOMO_Yodel_Bot"; // Optional
-        String botOwner = "BotOwner"; // Optional
-        BotMain botInstance = new BotMain(botToken, botUsername, botOwner);
+        String optionalId = System.getenv().getOrDefault("OPTIONAL_ID", "");
+        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "10000"));
+
+        // Initialize BotMain
+        BotMain botInstance = new BotMain(botName, botToken, optionalId);
+
+        // Configure Spark
+        port(port);
+
+        // JSON parser
+        ObjectMapper mapper = new ObjectMapper();
+
+        // Webhook endpoint
+        post("/webhook", (req, res) -> {
+            try {
+                String body = req.body();
+                Update update = mapper.readValue(body, Update.class);
+
+                // Forward update to BotMain
+                botInstance.handleUpdate(update);
+
+                res.status(200);
+                return "OK";
+            } catch (Exception e) {
+                e.printStackTrace();
+                res.status(500);
+                return "ERROR";
+            }
+        });
+
+        System.out.println("ApplicationMain running on port " + port);
+    }
+}
