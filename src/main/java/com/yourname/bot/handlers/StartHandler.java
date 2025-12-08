@@ -16,6 +16,8 @@ public class StartHandler {
 
     public BotApiMethod<?> handle(Update update) {
         Long chatId = update.getMessage().getChatId();
+        System.out.println("StartHandler triggered for chatId: " + chatId); // debug
+
         SendMessage sm = new SendMessage();
         sm.setChatId(chatId.toString());
         sm.setText("Welcome to the FomoYodlverse Game Bot! 🚀");
