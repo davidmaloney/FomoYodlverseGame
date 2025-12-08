@@ -1,18 +1,21 @@
 package com.yourname.bot;
 
+import com.yourname.bot.handlers.HandlerRouter;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
-import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 
 public class BotMain extends TelegramLongPollingBot {
 
     private final String botName;
     private final String botToken;
+    private final HandlerRouter router;
 
     public BotMain(String botName, String botToken) {
         this.botName = botName;
         this.botToken = botToken;
+        this.router = new HandlerRouter(this);
     }
 
     @Override
@@ -31,21 +34,20 @@ public class BotMain extends TelegramLongPollingBot {
     }
 
     public void handleUpdate(Update update) {
-        // Keep gameplay logic intact
-        // Forward update to router or handlers
-        Router.root(update, this);
-    }
-
-    // Helper method to send messages
-    public void sendMessage(String chatId, String text) {
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId);
-        message.setText(text);
-
         try {
-            execute(message);
-        } catch (TelegramApiException e) {
-            e.printStackTrace(); // We'll handle this with StartHandler debug
+            router.route(update);  // Router handles routing to start/master/etc.
+        } catch (Exception e) {
+            e.printStackTrace();
+            if (update.hasMessage() && update.getMessage().hasChatId()) {
+                SendMessage msg = new SendMessage();
+                msg.setChatId(update.getMessage().getChatId().toString());
+                msg.setText("Error processing your message.");
+                try {
+                    execute(msg);
+                } catch (TelegramApiException ex) {
+                    ex.printStackTrace();
+                }
+            }
         }
     }
 }
