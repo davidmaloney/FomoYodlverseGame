@@ -19,7 +19,8 @@ public class ApplicationMain {
     public static void main(String[] args) throws Exception {
         // Initialize Telegram bot API
         TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
-        BotMain botInstance = new BotMain("YOUR_BOT_NAME", "YOUR_BOT_USERNAME", System.getenv("TELEGRAM_BOT_TOKEN"));
+        BotMain botInstance = new BotMain(); // No changes needed here
+
         try {
             botsApi.registerBot(botInstance);
         } catch (TelegramApiException e) {
@@ -32,11 +33,8 @@ public class ApplicationMain {
         // Initialize HandlerRouter
         HandlerRouter router = new HandlerRouter(botInstance);
 
-        // Use Render-assigned port, fallback to 10000 if not set
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "10000"));
-        System.out.println("Webhook server will start on port: " + port);
-
-        // Set up simple webhook server
+        // Set up simple webhook server on port 10000 (Render-compatible)
+        int port = 10000;
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/webhook", exchange -> {
             if ("POST".equals(exchange.getRequestMethod())) {
@@ -44,10 +42,13 @@ public class ApplicationMain {
                 ObjectMapper mapper = new ObjectMapper();
                 try {
                     Update update = mapper.readValue(requestBody, Update.class);
-                    // Forward to BotMain (polling logic still works)
-                    botInstance.onWebhookUpdateReceived(update);
-                    // Route to your existing handlers
+
+                    // Forward update to BotMain's existing method
+                    botInstance.onUpdateReceived(update);
+
+                    // Route to your existing handlers as well
                     router.route(update);
+
                 } catch (Exception ex) {
                     ex.printStackTrace();
                 } finally {
@@ -64,6 +65,6 @@ public class ApplicationMain {
 
         server.start();
         System.out.println("Webhook server started on port " + port);
-        System.out.println("Bot service is live! Webhook available at /webhook");
+        System.out.println("Bot service is live! Available at your primary URL /webhook");
     }
 }
