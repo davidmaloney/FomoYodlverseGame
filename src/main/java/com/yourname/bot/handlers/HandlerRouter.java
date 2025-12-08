@@ -2,16 +2,21 @@ package com.yourname.bot.handlers;
 
 import org.telegram.telegrambots.meta.api.objects.Update;
 
-public class Router {
-    private static final StartHandler startHandler = new StartHandler();
+public class HandlerRouter {
 
-    public static void handle(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String text = update.getMessage().getText();
-            if ("/start".equals(text)) {
-                startHandler.handle(update);
-            }
-            // Add more handlers here as needed
+    private final StartHandler startHandler;
+    private final MasterHandler masterHandler;
+
+    public HandlerRouter() {
+        this.startHandler = new StartHandler();
+        this.masterHandler = new MasterHandler();
+    }
+
+    public void handleUpdate(Update update) {
+        if (update.hasMessage() && update.getMessage().getText().equals("/start")) {
+            startHandler.handle(update);
+        } else {
+            masterHandler.handle(update);
         }
     }
 }
