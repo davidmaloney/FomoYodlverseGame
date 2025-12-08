@@ -1,25 +1,23 @@
 package com.yourname.bot;
 
-import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.bots.DefaultAbsSender;
-import org.telegram.telegrambots.bots.DefaultBotOptions;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 
-import com.yourname.bot.handlers.HandlerRouter;
+public class BotMain extends TelegramLongPollingBot {
 
-public class BotMain extends DefaultAbsSender {
     private final String botName;
     private final String botToken;
-    private final String optionalId; // Could be guild ID or client ID
-    private final HandlerRouter router;
 
-    // Constructor
-    public BotMain(String botName, String botToken, String optionalId) {
-        super(new DefaultBotOptions());
+    public BotMain(String botName, String botToken) {
         this.botName = botName;
         this.botToken = botToken;
-        this.optionalId = optionalId;
-        this.router = new HandlerRouter(this);
+    }
+
+    @Override
+    public String getBotUsername() {
+        return botName;
     }
 
     @Override
@@ -27,33 +25,27 @@ public class BotMain extends DefaultAbsSender {
         return botToken;
     }
 
-    public String getBotName() {
-        return botName;
+    @Override
+    public void onUpdateReceived(Update update) {
+        handleUpdate(update);
     }
 
-    public String getOptionalId() {
-        return optionalId;
-    }
-
-    // Forwarded from ApplicationMain
     public void handleUpdate(Update update) {
-        System.out.println("=== BotMain.handleUpdate called ===");
-        System.out.println("Update received! ChatId: " +
-                update.getMessage().getChatId() + ", Text: " +
-                update.getMessage().getText());
-        System.out.println("=================================");
+        // Keep gameplay logic intact
+        // Forward update to router or handlers
+        Router.root(update, this);
+    }
 
-        // Route to the handler
-        BotApiMethod<?> response = router.route(update);
+    // Helper method to send messages
+    public void sendMessage(String chatId, String text) {
+        SendMessage message = new SendMessage();
+        message.setChatId(chatId);
+        message.setText(text);
 
-        // Execute the response (send to Telegram)
-        if (response != null) {
-            try {
-                execute(response);
-                System.out.println("Message sent to chatId: " + update.getMessage().getChatId());
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+        try {
+            execute(message);
+        } catch (TelegramApiException e) {
+            e.printStackTrace(); // We'll handle this with StartHandler debug
         }
     }
 }
