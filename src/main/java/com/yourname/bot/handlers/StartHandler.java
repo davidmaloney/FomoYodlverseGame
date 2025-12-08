@@ -1,17 +1,27 @@
 package com.yourname.bot.handlers;
 
-import com.yourname.bot.BotMain;
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+
+import com.yourname.bot.BotMain;
 
 public class StartHandler {
 
-    public StartHandler() {
-        // original constructor
+    private final BotMain bot;
+
+    public StartHandler(BotMain bot) {
+        this.bot = bot;
     }
 
-    public void handle(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            System.out.println("StartHandler received message: " + update.getMessage().getText());
-        }
+    public BotApiMethod<?> handle(Update update) {
+        Long chatId = update.getMessage().getChatId();
+        System.out.println("StartHandler triggered for chatId: " + chatId);
+
+        SendMessage sm = new SendMessage();
+        sm.setChatId(chatId.toString());
+        sm.setText("Welcome to the FomoYodlverse Game Bot! 🚀");
+
+        return sm;
     }
 }
