@@ -1,55 +1,59 @@
 package com.yourname.bot;
 
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.bots.DefaultAbsSender;
+import org.telegram.telegrambots.bots.DefaultBotOptions;
 
-public class BotMain {
+import com.yourname.bot.handlers.HandlerRouter;
+
+public class BotMain extends DefaultAbsSender {
     private final String botName;
     private final String botToken;
     private final String optionalId; // Could be guild ID or client ID
+    private final HandlerRouter router;
 
+    // Constructor
     public BotMain(String botName, String botToken, String optionalId) {
+        super(new DefaultBotOptions());
         this.botName = botName;
         this.botToken = botToken;
         this.optionalId = optionalId;
-        // Initialize any other necessary bot state here
+        this.router = new HandlerRouter(this);
     }
 
-    // Forwarded from ApplicationMain
-    public void handleUpdate(Update update) {
-        // ===== DEBUG LOGGING =====
-        System.out.println("=== BotMain.handleUpdate called ===");
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            Long chatId = update.getMessage().getChatId();
-            String messageText = update.getMessage().getText();
-            System.out.println("Update received! ChatId: " + chatId + ", Text: " + messageText);
-        } else {
-            System.out.println("Update received but no message text or not a message update.");
-        }
-        System.out.println("=================================");
-
-        // Insert all your existing handler logic here
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            long chatId = update.getMessage().getChatId();
-            // Call your existing command handlers, game logic, etc.
-            processMessage(chatId, messageText);
-        }
-    }
-
-    private void processMessage(long chatId, String messageText) {
-        // Your game logic / command handling here
-        // Keep everything as in your last working bot
+    @Override
+    public String getBotToken() {
+        return botToken;
     }
 
     public String getBotName() {
         return botName;
     }
 
-    public String getBotToken() {
-        return botToken;
-    }
-
     public String getOptionalId() {
         return optionalId;
+    }
+
+    // Forwarded from ApplicationMain
+    public void handleUpdate(Update update) {
+        System.out.println("=== BotMain.handleUpdate called ===");
+        System.out.println("Update received! ChatId: " +
+                update.getMessage().getChatId() + ", Text: " +
+                update.getMessage().getText());
+        System.out.println("=================================");
+
+        // Route to the handler
+        BotApiMethod<?> response = router.route(update);
+
+        // Execute the response (send to Telegram)
+        if (response != null) {
+            try {
+                execute(response);
+                System.out.println("Message sent to chatId: " + update.getMessage().getChatId());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
