@@ -13,16 +13,16 @@ public class ApplicationMain {
         String botToken = System.getenv("TELEGRAM_BOT_TOKEN");
         String optionalId = System.getenv().getOrDefault("OPTIONAL_ID", "");
 
-        // Port: prefer Render's PORT, otherwise default to 443 for Telegram
+        // Port: Render will inject PORT, fallback to 443 for Telegram webhook
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "443"));
 
-        // Initialize BotMain (your existing bot logic)
+        // Initialize your BotMain instance
         BotMain botInstance = new BotMain(botName, botToken, optionalId);
 
-        // Set Spark port
+        // Configure Spark
         port(port);
 
-        // (Optional) set a small thread pool for Spark (safe defaults)
+        // Optional: small thread pool for Spark
         int maxThreads = Integer.parseInt(System.getenv().getOrDefault("WEB_THREADS_MAX", "8"));
         int minThreads = Integer.parseInt(System.getenv().getOrDefault("WEB_THREADS_MIN", "2"));
         int idleTimeoutMillis = Integer.parseInt(System.getenv().getOrDefault("WEB_IDLE_MS", "30000"));
@@ -31,22 +31,22 @@ public class ApplicationMain {
         // JSON parser
         ObjectMapper mapper = new ObjectMapper();
 
-        // Health endpoint (mapped) — useful to confirm service is up
+        // Health endpoint — confirms service is alive
         get("/", (req, res) -> {
             res.type("application/json");
             return "{\"status\":\"ok\",\"port\":" + port + "}";
         });
 
-        // Webhook endpoint (Telegram will POST here)
+        // Webhook endpoint — Telegram POSTs here
         post("/webhook", (req, res) -> {
             try {
                 String body = req.body();
                 System.out.println("Received /webhook POST, body length: " + (body == null ? 0 : body.length()));
 
+                // Parse the incoming update
                 Update update = mapper.readValue(body, Update.class);
 
-                // Forward update to your BotMain handler method
-                // BotMain.handleUpdate should contain the unchanged gameplay routing logic
+                // Forward update to BotMain handler
                 botInstance.handleUpdate(update);
 
                 res.status(200);
