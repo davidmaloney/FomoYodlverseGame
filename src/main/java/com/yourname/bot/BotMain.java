@@ -1,50 +1,35 @@
 package com.yourname.bot;
 
-import com.yourname.bot.handlers.HandlerRouter;
-import org.telegram.telegrambots.bots.DefaultAbsSender;
-import org.telegram.telegrambots.bots.DefaultBotOptions;
-import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import com.yourname.bot.handlers.HandlerRouter;
 
-public class BotMain extends DefaultAbsSender {
-
+public class BotMain {
     private final String botName;
     private final String botToken;
     private final String optionalId; // Could be guild ID or client ID
-
     private final HandlerRouter router;
 
     public BotMain(String botName, String botToken, String optionalId) {
-        super(new DefaultBotOptions()); // Minimal options
         this.botName = botName;
         this.botToken = botToken;
         this.optionalId = optionalId;
-
-        // Initialize the router with this bot
-        this.router = new HandlerRouter(this);
+        this.router = new HandlerRouter(this); // Initialize router
     }
 
-    @Override
-    public String getBotToken() {
-        return botToken;
-    }
-
+    // Forwarded from ApplicationMain
     public void handleUpdate(Update update) {
-        try {
-            // Route the update through the router
-            BotApiMethod<?> method = router.route(update);
-
-            if (method != null) {
-                execute(method); // Sends the message via Telegram API
-            }
-        } catch (TelegramApiException e) {
-            e.printStackTrace();
+        // Only process messages with text
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            router.route(update); // Forward the full Update to the router
         }
     }
 
     public String getBotName() {
         return botName;
+    }
+
+    public String getBotToken() {
+        return botToken;
     }
 
     public String getOptionalId() {
