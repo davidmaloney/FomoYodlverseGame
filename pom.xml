@@ -1,11 +1,11 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.yourname</groupId>
+    <groupId>com.yourname.bot</groupId>
     <artifactId>FOMOYodelBot</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
@@ -13,48 +13,61 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <telegrambots.version>6.8.0</telegrambots.version>
     </properties>
 
     <dependencies>
-
-        <!-- Telegram Bots API -->
+        <!-- Telegram Bot API -->
         <dependency>
             <groupId>org.telegram</groupId>
             <artifactId>telegrambots</artifactId>
-            <version>${telegrambots.version}</version>
+            <version>6.8.0</version>
         </dependency>
-
-        <!-- Telegram Bots Meta (includes Update, Message, etc.) -->
         <dependency>
             <groupId>org.telegram</groupId>
             <artifactId>telegrambots-meta</artifactId>
-            <version>${telegrambots.version}</version>
+            <version>6.8.0</version>
         </dependency>
 
-        <!-- Telegram Bot Webhook (we need it because BotMain now implements WebhookBot) -->
+        <!-- SparkJava for lightweight webhook -->
         <dependency>
-            <groupId>org.telegram</groupId>
-            <artifactId>telegrambotsextensions</artifactId>
-            <version>${telegrambots.version}</version>
+            <groupId>com.sparkjava</groupId>
+            <artifactId>spark-core</artifactId>
+            <version>2.9.4</version>
         </dependency>
 
-        <!-- Jackson for parsing webhook request JSON -->
+        <!-- Jackson for JSON parsing -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.17.1</version>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.17.1</version>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.17.1</version>
+        </dependency>
 
-        <!-- Simple HTTP server (built-in JDK) — no dependency needed -->
-
+        <!-- Optional: Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.3</version>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
-
-            <!-- Compiler plugin -->
+            <!-- Maven Compiler Plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -65,7 +78,7 @@
                 </configuration>
             </plugin>
 
-            <!-- SHADE PLUGIN (FAT JAR) -->
+            <!-- Maven Shade Plugin for fat JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -79,7 +92,6 @@
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
-                                <!-- Ensure the JAR has a runnable main class -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.yourname.bot.ApplicationMain</mainClass>
                                 </transformer>
@@ -88,7 +100,6 @@
                     </execution>
                 </executions>
             </plugin>
-
         </plugins>
     </build>
 
