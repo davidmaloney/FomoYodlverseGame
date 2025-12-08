@@ -1,18 +1,24 @@
 package com.yourname.bot;
 
-import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.BotApiMethod;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.bots.DefaultAbsSender;
+import org.telegram.telegrambots.bots.DefaultBotOptions;
 
-public class BotMain extends TelegramLongPollingBot {
+import com.yourname.bot.handlers.HandlerRouter;
 
+public class BotMain extends DefaultAbsSender {
+    private final String botName;
     private final String botToken;
-    private final String botUsername;
+    private final String optionalId; // Could be guild ID or client ID
+    private final HandlerRouter router;
 
-    public BotMain(String botUsername, String botToken) {
-        this.botUsername = botUsername;
+    public BotMain(String botName, String botToken, String optionalId) {
+        super(new DefaultBotOptions());
+        this.botName = botName;
         this.botToken = botToken;
+        this.optionalId = optionalId;
+        this.router = new HandlerRouter(this);
     }
 
     @Override
@@ -20,24 +26,28 @@ public class BotMain extends TelegramLongPollingBot {
         return botToken;
     }
 
-    @Override
-    public String getBotUsername() {
-        return botUsername;
+    public String getBotName() {
+        return botName;
     }
 
-    @Override
-    public void onUpdateReceived(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            long chatId = update.getMessage().getChatId();
+    public String getOptionalId() {
+        return optionalId;
+    }
 
-            SendMessage message = new SendMessage();
-            message.setChatId(String.valueOf(chatId));
-            message.setText("Received: " + messageText);
+    public void handleUpdate(Update update) {
+        System.out.println("=== BotMain.handleUpdate called ===");
+        System.out.println("Update received! ChatId: " +
+                update.getMessage().getChatId() + ", Text: " +
+                update.getMessage().getText());
+        System.out.println("=================================");
 
+        BotApiMethod<?> response = router.route(update);
+
+        if (response != null) {
             try {
-                execute(message);
-            } catch (TelegramApiException e) {
+                execute(response);
+                System.out.println("Message sent to chatId: " + update.getMessage().getChatId());
+            } catch (Exception e) {
                 e.printStackTrace();
             }
         }
