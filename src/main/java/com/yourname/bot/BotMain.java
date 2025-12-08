@@ -2,23 +2,22 @@ package com.yourname.bot;
 
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import com.yourname.bot.handlers.HandlerRouter;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 public class BotMain extends TelegramLongPollingBot {
 
     private final String botToken;
     private final String botUsername;
-    private final HandlerRouter router;
 
-    public BotMain(String botToken, String botUsername) {
-        this.botToken = botToken;
+    public BotMain(String botUsername, String botToken) {
         this.botUsername = botUsername;
-        this.router = new HandlerRouter();
+        this.botToken = botToken;
     }
 
     @Override
     public void onUpdateReceived(Update update) {
-        router.handleUpdate(update);
+        // Route updates to the router
+        Router.handleUpdate(update);
     }
 
     @Override
