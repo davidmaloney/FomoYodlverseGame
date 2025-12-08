@@ -8,12 +8,12 @@ public class HandlerRouter {
     private final MasterHandler masterHandler;
 
     public HandlerRouter() {
-        this.startHandler = new StartHandler();
-        this.masterHandler = new MasterHandler();
+        startHandler = new StartHandler();
+        masterHandler = new MasterHandler();
     }
 
-    public void handleUpdate(Update update) {
-        if (update.hasMessage() && update.getMessage().getText().equals("/start")) {
+    public void route(Update update) {
+        if (update.hasMessage() && update.getMessage().getText().startsWith("/start")) {
             startHandler.handle(update);
         } else {
             masterHandler.handle(update);
