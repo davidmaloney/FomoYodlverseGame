@@ -16,10 +16,11 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 
-# Copy the shaded JAR (THIS is the correct filename!)
+# Copy the shaded JAR (please ensure the filename matches your build)
 COPY --from=build /app/target/FOMOYodelBot-1.0.0.jar app.jar
 
-# Render web services expect a port; we expose the Telegram webhook port
-EXPOSE 10000
+# Render expects your app to listen on the PORT env var; Telegram requires webhook port to be 443/80/88/8443.
+# We'll expose 443 so it matches Telegram's allowed port.
+EXPOSE 443
 
 ENTRYPOINT ["java","-jar","app.jar"]
