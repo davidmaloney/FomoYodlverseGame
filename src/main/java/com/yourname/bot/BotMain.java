@@ -1,45 +1,55 @@
 package com.yourname.bot;
 
-import java.util.List;
+import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 
-public class BotMain {
+public class BotMain extends TelegramLongPollingBot {
 
-    private final String botToken;
+    private final String token;
     private final String clientId;
     private final String guildId;
 
-    // Constructor now takes three required arguments
-    public BotMain(String botToken, String clientId, String guildId) {
-        this.botToken = botToken;
+    // Constructor with parameters for ApplicationMain to call
+    public BotMain(String token, String clientId, String guildId) {
+        this.token = token;
         this.clientId = clientId;
         this.guildId = guildId;
     }
 
-    // Start method called by ApplicationMain
-    public void start() {
-        System.out.println("BotMain: Starting bot with parameters:");
-        System.out.println("Token: " + botToken);
-        System.out.println("Client ID: " + clientId);
-        System.out.println("Guild ID: " + guildId);
+    @Override
+    public void onUpdateReceived(Update update) {
+        // Normal polling logic: handle messages and commands
+        if (update.hasMessage() && update.getMessage().hasText()) {
+            String chatId = update.getMessage().getChatId().toString();
+            String text = update.getMessage().getText();
 
-        // Initialize bot logic here (e.g., connect to Discord API, setup events)
-        initializeHandlers();
-    }
+            SendMessage message = new SendMessage();
+            message.setChatId(chatId);
+            message.setText("Echo: " + text);
 
-    // Example method to register commands or buttons
-    public void registerCommands(List<String> commands) {
-        for (String command : commands) {
-            System.out.println("Registering command: " + command);
-            // Command registration logic goes here
+            try {
+                execute(message);
+            } catch (TelegramApiException e) {
+                e.printStackTrace();
+            }
         }
     }
 
-    // Initialize bot handlers
-    private void initializeHandlers() {
-        System.out.println("BotMain: Initializing handlers...");
-        // Load your event handlers, message handlers, button handlers, etc.
-        // Preserves the structure from previous working state with rockets
+    @Override
+    public String getBotUsername() {
+        return clientId; // Or your bot username if needed
     }
 
-    // You can add more methods here as needed for features
+    @Override
+    public String getBotToken() {
+        return token;
+    }
+
+    // Optional: helper to safely receive updates from ApplicationMain webhook
+    public void receiveWebhookUpdate(Update update) {
+        // Forward updates to normal polling logic if needed
+        onUpdateReceived(update);
+    }
 }
