@@ -1,77 +1,79 @@
 package com.yourname.bot;
 
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpExchange;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.yourname.bot.handlers.HandlerRouter;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.List;
 
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-
 public class ApplicationMain {
 
     public static void main(String[] args) throws Exception {
-        // Arguments for BotMain constructor
+        // Bot credentials
         String botToken = "YOUR_BOT_TOKEN"; // replace with actual token
         String clientId = "YOUR_CLIENT_ID"; // replace with actual client ID
         String guildId = "YOUR_GUILD_ID";   // replace with actual guild/server ID
 
-        // Create BotMain instance
+        // Create bot
         BotMain bot = new BotMain(botToken, clientId, guildId);
-
-        // Start the bot exactly as it worked before
         bot.start();
 
-        // Register commands
+        // Register sample commands
         List<String> sampleCommands = List.of("command1", "command2");
         bot.registerCommands(sampleCommands);
 
         System.out.println("ApplicationMain: Bot has started successfully.");
 
-        // --- Render-safe webhook setup ---
-        int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "4567"));
+        // Create HandlerRouter
+        HandlerRouter router = new HandlerRouter(bot);
+
+        // Set port for Render or fallback
+        int port = 10000; // fallback port
+        String portEnv = System.getenv("PORT");
+        if (portEnv != null) {
+            port = Integer.parseInt(portEnv);
+        }
+
+        // Start simple HTTP server for webhook
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.createContext("/webhook", new WebhookHandler(bot));
-        server.setExecutor(null); // default executor
-        server.start();
+        server.createContext("/webhook", new HttpHandler() {
+            private final ObjectMapper mapper = new ObjectMapper();
 
-        System.out.println("Webhook server started on port " + port);
-    }
-
-    // Webhook handler to receive Telegram updates and forward to BotMain safely
-    static class WebhookHandler implements HttpHandler {
-        private final BotMain bot;
-
-        public WebhookHandler(BotMain bot) {
-            this.bot = bot;
-        }
-
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            try {
+            @Override
+            public void handle(HttpExchange exchange) throws IOException {
                 if ("POST".equals(exchange.getRequestMethod())) {
-                    // Read the raw JSON payload
-                    byte[] requestBody = exchange.getRequestBody().readAllBytes();
+                    try {
+                        JsonNode json = mapper.readTree(exchange.getRequestBody());
+                        com.telegram.telegrambots.meta.api.objects.Update update =
+                                mapper.treeToValue(json, com.telegram.telegrambots.meta.api.objects.Update.class);
 
-                    // Here you can implement real forwarding to BotMain if BotMain exposes a safe method
-                    // For now, just log payload length
-                    System.out.println("Received webhook payload of length: " + requestBody.length);
+                        // Route update
+                        router.route(update);
 
-                    // Respond OK to Telegram
-                    String response = "OK";
-                    exchange.sendResponseHeaders(200, response.getBytes().length);
-                    OutputStream os = exchange.getResponseBody();
-                    os.write(response.getBytes());
-                    os.close();
+                        // Respond with 200 OK
+                        String response = "OK";
+                        exchange.sendResponseHeaders(200, response.getBytes().length);
+                        OutputStream os = exchange.getResponseBody();
+                        os.write(response.getBytes());
+                        os.close();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        exchange.sendResponseHeaders(500, 0);
+                        exchange.getResponseBody().close();
+                    }
                 } else {
-                    exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+                    exchange.sendResponseHeaders(405, 0); // Method not allowed
+                    exchange.getResponseBody().close();
                 }
-            } catch (Exception e) {
-                // Catch all exceptions to prevent Render from crashing the app
-                System.err.println("Error handling webhook: " + e.getMessage());
-                exchange.sendResponseHeaders(500, -1);
             }
-        }
+        });
+
+        server.start();
+        System.out.println("Webhook server started on port " + port);
     }
 }
