@@ -1,109 +1,63 @@
 require('dotenv').config()
 
-const express = require('express')
 const { Telegraf, Markup } = require('telegraf')
 const fs = require('fs')
-
-/* -----------------------------
-   WEB SERVER (RENDER REQUIRED)
------------------------------ */
-
-const app = express()
-
-app.get('/', (req, res) => {
-  res.send('FOMO Yodelverse is alive 🚀')
-})
-
-const PORT = process.env.PORT || 10000
-
-app.listen(PORT, () => {
-  console.log('Web server running on port', PORT)
-})
-
-/* -----------------------------
-   TELEGRAM BOT
------------------------------ */
 
 const bot = new Telegraf(process.env.BOT_TOKEN)
 
 const DB_PATH = './data/users.json'
 
 function loadDB() {
-  return JSON.parse(fs.readFileSync(DB_PATH))
+  try {
+    return JSON.parse(fs.readFileSync(DB_PATH))
+  } catch {
+    return {}
+  }
 }
 
 function saveDB(db) {
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2))
 }
 
+function getUser(db, id) {
+  if (!db[id]) {
+    db[id] = {
+      character: "FOMO Yodel",
+      xp: 0,
+      credits: 100
+    }
+  }
+  return db[id]
+}
+
 function random(arr) {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
-/* -----------------------------
-   CHARACTERS
------------------------------ */
-
-const characters = [
-  "FOMO Yodel",
-  "Chewstacka",
-  "Fan SOLo",
-  "Obi FOMO Wannabe",
-  "Darth Fader",
-  "Web3PO",
-  "Princess Liquidia",
-  "Darth Scamus",
-  "Jabba the Whale",
-  "R2 DeFi",
-  "Admiral Grow Bar"
-]
-
-/* -----------------------------
-   EVENTS
------------------------------ */
-
 const events = [
-  "⚠️ Darth Scamus panic sold 4 billion tokens",
+  "⚠️ Darth Scamus dumped the market",
   "🐋 Jabba the Whale is manipulating liquidity",
-  "📉 Market crash triggered by FOMO panic",
-  "🚀 Fan SOLo discovered hidden gains on Solana",
-  "🧠 Web3PO explains blockchain for 9 hours",
-  "🌕 FOMO Yodel senses a massive pump incoming",
-  "💀 Obi FOMO Wannabe gave terrible financial advice"
+  "📉 FOMO crash incoming",
+  "🚀 Solana liquidity discovered",
+  "🧠 Web3PO overexplains everything again"
 ]
-
-/* -----------------------------
-   START
------------------------------ */
 
 bot.start((ctx) => {
   const db = loadDB()
-  const id = ctx.from.id
-
-  if (!db[id]) {
-    db[id] = {
-      character: random(characters),
-      xp: 0,
-      credits: 100
-    }
-    saveDB(db)
-  }
+  const user = getUser(db, ctx.from.id)
+  saveDB(db)
 
   ctx.reply(
-`WELCOME TO FOMO YODELVERSE
+`FOMO YODELVERSE
 
 You are:
-${db[id].character}
+${user.character}
 
 Commands:
 /profile
 /event`
   )
 })
-
-/* -----------------------------
-   PROFILE
------------------------------ */
 
 bot.command('profile', (ctx) => {
   const db = loadDB()
@@ -113,50 +67,53 @@ bot.command('profile', (ctx) => {
 
   ctx.reply(
 `PROFILE
-
 Character: ${user.character}
 XP: ${user.xp}
 Credits: ${user.credits}`
   )
 })
 
-/* -----------------------------
-   EVENT + BUTTONS
------------------------------ */
-
 bot.command('event', (ctx) => {
-  const text = random(events)
-
   ctx.reply(
-    text,
+    random(events),
     Markup.inlineKeyboard([
-      Markup.button.callback("BUY DIP", "buy"),
+      Markup.button.callback("BUY", "buy"),
       Markup.button.callback("HODL", "hodl"),
-      Markup.button.callback("PANIC SELL", "sell")
+      Markup.button.callback("SELL", "sell")
     ])
   )
 })
 
-/* -----------------------------
-   BUTTON ACTIONS
------------------------------ */
-
 bot.action("buy", (ctx) => {
-  ctx.reply("You bought the dip. +10 XP. FOMO Yodel approves.")
+  const db = loadDB()
+  const user = getUser(db, ctx.from.id)
+
+  user.xp += 10
+  saveDB(db)
+
+  ctx.reply("+10 XP (BUY DIP)")
 })
 
 bot.action("hodl", (ctx) => {
-  ctx.reply("Diamond hands detected. +15 XP. Jabba respects you.")
+  const db = loadDB()
+  const user = getUser(db, ctx.from.id)
+
+  user.xp += 15
+  saveDB(db)
+
+  ctx.reply("+15 XP (HODL strong)")
 })
 
 bot.action("sell", (ctx) => {
-  ctx.reply("You panic sold. Darth Fader is pleased. -5 XP.")
-})
+  const db = loadDB()
+  const user = getUser(db, ctx.from.id)
 
-/* -----------------------------
-   START BOT
------------------------------ */
+  user.xp -= 5
+  saveDB(db)
+
+  ctx.reply("-5 XP (panic sell)")
+})
 
 bot.launch()
 
-console.log("FOMO Yodelverse Bot Running")
+console.log("FOMO Yodelverse Worker running")
