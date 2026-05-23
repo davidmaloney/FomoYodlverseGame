@@ -5,73 +5,90 @@ const { Telegraf, Markup } = require("telegraf");
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 /* =========================================================
-   STORAGE SYSTEM
+   STORAGE
 ========================================================= */
 
 const DB_PATH = "./data.json";
+const WORLD_PATH = "./world.json";
 
-let DB = load();
-
-function load() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH));
-  } catch {
-    return {};
-  }
-}
-
-let saveLock = false;
-
-function save() {
-  if (saveLock) return;
-
-  saveLock = true;
-
-  setTimeout(() => {
-    fs.writeFileSync(DB_PATH, JSON.stringify(DB, null, 2));
-    saveLock = false;
-  }, 800);
-}
-
-/* =========================================================
-   WORLD STATE
-========================================================= */
-
-let WORLD = {
+let DB = load(DB_PATH, {});
+let WORLD = load(WORLD_PATH, {
   season: 1,
   chaosLevel: 1,
-  bossActive: false,
-  bossHP: 0,
-  worldBank: 500000,
-  blackMarketLevel: 1,
-
+  boss: { active: false, hp: 0, maxHp: 0 },
   factionScore: {
     "HODL Alliance": 0,
     "FOMO Syndicate": 0,
     "Scam Resistance Guild": 0,
     "Whale Empire": 0
   }
+});
+
+function load(path, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(path));
+  } catch {
+    return fallback;
+  }
+}
+
+let saveQueue = new Set();
+let saving = false;
+
+function saveAll() {
+  saveQueue.add("db");
+  saveQueue.add("world");
+
+  if (saving) return;
+  saving = true;
+
+  setTimeout(() => {
+    if (saveQueue.has("db")) {
+      fs.writeFileSync(DB_PATH, JSON.stringify(DB, null, 2));
+    }
+    if (saveQueue.has("world")) {
+      fs.writeFileSync(WORLD_PATH, JSON.stringify(WORLD, null, 2));
+    }
+
+    saveQueue.clear();
+    saving = false;
+  }, 800);
+}
+
+/* =========================================================
+   UTILITIES
+========================================================= */
+
+const rand = (a) => a[Math.floor(Math.random() * a.length)];
+const now = () => Date.now();
+
+const COOLDOWNS = {
+  event: 5000,
+  mine: 8000,
+  crime: 10000,
+  duel: 0
 };
+
+function cdOk(u, key) {
+  const k = "cd_" + key;
+  if (!u[k] || now() - u[k] > COOLDOWNS[key]) {
+    u[k] = now();
+    return true;
+  }
+  return false;
+}
+
+function level(xp) {
+  return Math.floor(xp / 100) + 1;
+}
+
+function power(u) {
+  return u.xp + u.wins * 20 + u.prestige * 200 + u.reputation * 5;
+}
 
 /* =========================================================
    GAME DATA
 ========================================================= */
-
-const characters = [
-  "FOMO Yodel",
-  "Chewstacka",
-  "Fan Solo",
-  "Darth Fader",
-  "Web3PO",
-  "Princess Liquidia",
-  "Darth Scamius",
-  "Jabba the Whale",
-  "R2D5",
-  "Admiral Grow Bar",
-  "Obi FOMO Wannabe",
-  "LFG Skytalker",
-  "Discount Duko"
-];
 
 const factions = [
   "HODL Alliance",
@@ -80,908 +97,343 @@ const factions = [
   "Whale Empire"
 ];
 
-const starterItems = [
-  "Rusty Wallet",
-  "Broken Mining Rig",
-  "Suspicious NFT",
-  "Pixel Coin",
-  "Meme Fragment"
-];
-
 const events = [
-  {
-    title: "Whale Detected",
-    text: "A giant whale manipulates the market.",
-    reward: 20,
-    chaos: 2
-  },
-  {
-    title: "FOMO Wave",
-    text: "Massive FOMO spreads across the galaxy.",
-    reward: 15,
-    chaos: 1
-  },
-  {
-    title: "Rugpull Alert",
-    text: "Dark scammers strike the outer sectors.",
-    reward: 25,
-    chaos: 3
-  },
-  {
-    title: "Meme Coin Surge",
-    text: "A meme coin explodes in popularity.",
-    reward: 10,
-    chaos: 1
-  },
-  {
-    title: "Quantum Pump",
-    text: "A mysterious token pumps 9000%.",
-    reward: 40,
-    chaos: 4
-  }
+  { t: "Whale Manipulation", r: 20, c: 2 },
+  { t: "FOMO Surge", r: 15, c: 1 },
+  { t: "Rugpull Incident", r: 30, c: 3 },
+  { t: "Meme Explosion", r: 10, c: 1 },
+  { t: "Quantum Pump", r: 40, c: 4 }
 ];
 
 /* =========================================================
-   UTILITIES
+   USER SYSTEM
 ========================================================= */
 
-function rand(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function level(xp) {
-  return Math.floor(xp / 100) + 1;
-}
-
-function getPower(user) {
-  return (
-    user.xp +
-    user.reputation * 2 +
-    user.wins * 10 +
-    user.prestige * 100
-  );
-}
-
-function addFactionScore(faction, amount) {
-  if (WORLD.factionScore[faction] !== undefined) {
-    WORLD.factionScore[faction] += amount;
-  }
-}
-
-function addChaos(amount) {
-  WORLD.chaosLevel += amount;
-
-  if (WORLD.chaosLevel < 1) {
-    WORLD.chaosLevel = 1;
-  }
-
-  if (WORLD.chaosLevel > 15 && !WORLD.bossActive) {
-    startBoss();
-  }
-}
-
-/* =========================================================
-   THREAD SAFE REPLY SYSTEM
-========================================================= */
-
-function reply(ctx, text, extra = {}) {
-  const threadId = ctx.message?.message_thread_id;
-
-  return ctx.reply(text, {
-    ...extra,
-    ...(threadId
-      ? {
-          message_thread_id: threadId
-        }
-      : {})
-  });
-}
-
-/* =========================================================
-   PLAYER SYSTEM
-========================================================= */
-
-function getUser(id, ctx = null) {
+function getUser(id, ctx) {
   if (!DB[id]) {
     DB[id] = {
       id,
       name: ctx?.from?.first_name || "Unknown",
-      username: ctx?.from?.username || "",
       faction: null,
       character: null,
+      registered: false,
 
       xp: 0,
       credits: 100,
-      level: 1,
-
-      energy: 100,
       hp: 100,
-      reputation: 0,
+      energy: 100,
 
-      inventory: [rand(starterItems)],
       wins: 0,
       losses: 0,
-
-      miningLevel: 1,
-      hackingLevel: 1,
-      tradingLevel: 1,
-
+      reputation: 0,
       prestige: 0,
 
-      lastDaily: 0,
-      lastCrime: 0,
-      lastMine: 0,
-
-      apartment: "Cardboard Box",
-      ship: "Rust Bucket",
-
-      registered: false
+      inventory: []
     };
   }
-
   return DB[id];
 }
 
 /* =========================================================
-   CHARACTER SELECTION
+   REPLY HELPER (TOPICS SAFE)
+========================================================= */
+
+function reply(ctx, text, extra = {}) {
+  const threadId = ctx.message?.message_thread_id;
+  return ctx.reply(text, {
+    ...extra,
+    ...(threadId ? { message_thread_id: threadId } : {})
+  });
+}
+
+/* =========================================================
+   ACTION ROUTER (IMPORTANT)
+========================================================= */
+
+const actions = {};
+
+function onAction(name, fn) {
+  actions[name] = fn;
+}
+
+bot.on("callback_query", async (ctx) => {
+  const key = ctx.callbackQuery.data;
+  if (actions[key]) return actions[key](ctx);
+  return ctx.answerCbQuery("Unknown action");
+});
+
+/* =========================================================
+   START
 ========================================================= */
 
 bot.start((ctx) => {
   const u = getUser(ctx.from.id, ctx);
 
-  if (u.registered) {
-    return mainMenuMessage(ctx, u);
-  }
+  if (u.registered) return mainMenu(ctx, u);
 
   return reply(
     ctx,
-    "🌌 WELCOME TO FOMO YODELVERSE\n\nChoose your character:",
-    Markup.inlineKeyboard([
-      [Markup.button.callback("🤖 R2D5", "char_R2D5")],
-      [Markup.button.callback("🧙 Darth Fader", "char_DarthFader")],
-      [Markup.button.callback("🚀 Fan Solo", "char_FanSolo")],
-      [Markup.button.callback("🐋 Jabba the Whale", "char_Jabba")],
-      [Markup.button.callback("💎 Princess Liquidia", "char_Liquidia")]
-    ])
+    "🌌 Welcome to Yodelverse\nChoose your faction:",
+    Markup.inlineKeyboard(
+      factions.map((f) => [
+        Markup.button.callback(f, "faction_" + f)
+      ])
+    )
   );
 });
 
-bot.action(/char_(.+)/, (ctx) => {
+onAction(/faction_(.+)/, (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+  const f = ctx.callbackQuery.data.replace("faction_", "");
 
-  const picked = ctx.match[1];
-
-  const map = {
-    R2D5: "R2D5",
-    DarthFader: "Darth Fader",
-    FanSolo: "Fan Solo",
-    Jabba: "Jabba the Whale",
-    Liquidia: "Princess Liquidia"
-  };
-
-  u.character = map[picked];
-
-  save();
-
-  return ctx.reply(
-    "⚔ Choose your faction:",
-    Markup.inlineKeyboard([
-      [Markup.button.callback("🟦 HODL Alliance", "faction_HODL Alliance")],
-      [Markup.button.callback("🟥 FOMO Syndicate", "faction_FOMO Syndicate")],
-      [Markup.button.callback("🟩 Scam Resistance Guild", "faction_Scam Resistance Guild")],
-      [Markup.button.callback("⬛ Whale Empire", "faction_Whale Empire")]
-    ])
-  );
-});
-
-bot.action(/faction_(.+)/, (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  u.faction = ctx.match[1];
+  u.faction = f;
+  u.character = "Wanderer";
   u.registered = true;
 
-  save();
-
-  mainMenuMessage(ctx, u);
+  saveAll();
+  mainMenu(ctx, u);
 });
 
 /* =========================================================
    MAIN MENU
 ========================================================= */
 
-function mainMenu() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback("⚡ EVENT", "menu_event"),
-      Markup.button.callback("📊 PROFILE", "menu_profile")
-    ],
-    [
-      Markup.button.callback("⚔ WAR", "menu_war"),
-      Markup.button.callback("🐋 BOSS", "menu_boss")
-    ],
-    [
-      Markup.button.callback("⛏ MINE", "menu_mine"),
-      Markup.button.callback("🕶 CRIME", "menu_crime")
-    ],
-    [
-      Markup.button.callback("🏪 SHOP", "menu_shop"),
-      Markup.button.callback("🎒 INVENTORY", "menu_inventory")
-    ],
-    [
-      Markup.button.callback("🏆 LEADERBOARD", "menu_leaderboard"),
-      Markup.button.callback("🎁 DAILY", "menu_daily")
-    ]
-  ]);
-}
-
-function mainMenuMessage(ctx, u) {
+function mainMenu(ctx, u) {
   return reply(
     ctx,
-    `🌌 FOMO YODELVERSE
+    `🌌 YODELVERSE
 
-👤 ${u.name}
-🤖 ${u.character}
+${u.name}
 ⚔ ${u.faction}
 
-⭐ Level: ${level(u.xp)}
-💰 Credits: ${u.credits}
-⚡ Energy: ${u.energy}
-❤️ HP: ${u.hp}
-
-🌍 Chaos Level: ${WORLD.chaosLevel}`,
-    mainMenu()
-  );
-}
-
-/* =========================================================
-   PROFILE
-========================================================= */
-
-bot.command("profile", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  reply(
-    ctx,
-    `📊 PROFILE
-
-👤 ${u.name}
-🤖 ${u.character}
-⚔ ${u.faction}
-
-⭐ Level: ${level(u.xp)}
 XP: ${u.xp}
-
-💰 Credits: ${u.credits}
-⚡ Energy: ${u.energy}
+💰 ${u.credits}
 ❤️ HP: ${u.hp}
-
-🏆 Wins: ${u.wins}
-💀 Losses: ${u.losses}
-
-⛏ Mining: ${u.miningLevel}
-🕶 Hacking: ${u.hackingLevel}
-📈 Trading: ${u.tradingLevel}
-
-🏠 Apartment: ${u.apartment}
-🚀 Ship: ${u.ship}
-
-🌟 Prestige: ${u.prestige}`
-  );
-});
-
-/* =========================================================
-   EVENTS
-========================================================= */
-
-function rollEvent() {
-  return rand(events);
-}
-
-bot.command("event", (ctx) => {
-  runEvent(ctx);
-});
-
-bot.action("menu_event", (ctx) => {
-  runEvent(ctx);
-});
-
-function runEvent(ctx) {
-  const u = getUser(ctx.from.id, ctx);
-
-  const e = rollEvent();
-
-  u.xp += e.reward;
-  u.credits += Math.floor(e.reward / 2);
-
-  addChaos(e.chaos);
-  addFactionScore(u.faction, e.reward);
-
-  save();
-
-  reply(
-    ctx,
-    `⚡ ${e.title}
-
-${e.text}
-
-+${e.reward} XP
-+${Math.floor(e.reward / 2)} Credits
-
-🌍 Chaos: ${WORLD.chaosLevel}`,
+⚡ Energy: ${u.energy}
+🔥 Chaos: ${WORLD.chaosLevel}`,
     Markup.inlineKeyboard([
-      [Markup.button.callback("⚔ ATTACK", "attack")],
-      [Markup.button.callback("🛡 DEFEND", "defend")],
-      [Markup.button.callback("💸 EXPLOIT", "exploit")]
+      [Markup.button.callback("⚡ Event", "event")],
+      [Markup.button.callback("⛏ Mine", "mine")],
+      [Markup.button.callback("🕶 Crime", "crime")],
+      [Markup.button.callback("⚔ Duel Queue", "duel_queue")],
+      [Markup.button.callback("🐋 Boss", "boss")],
+      [Markup.button.callback("🏆 Leaderboard", "lb")]
     ])
   );
 }
 
 /* =========================================================
-   ACTIONS
+   EVENTS (BALANCED RISK SYSTEM)
 ========================================================= */
 
-bot.action("attack", (ctx) => {
+onAction("event", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+  if (!cdOk(u, "event")) return ctx.answerCbQuery("Cooldown");
 
-  const dmg = 15 + Math.floor(Math.random() * 30);
+  const e = rand(events);
 
-  u.xp += 20;
-  u.credits += 15;
+  const risk = Math.random() * WORLD.chaosLevel;
 
-  damageBoss(dmg);
-
-  save();
-
-  ctx.reply(`⚔ You attacked chaos
-
-💥 Damage: ${dmg}
-+20 XP
-+15 Credits`);
-});
-
-bot.action("defend", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  u.xp += 10;
-
-  addChaos(-1);
-
-  save();
-
-  ctx.reply(`🛡 Defense successful
-
-Chaos reduced
-+10 XP`);
-});
-
-bot.action("exploit", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  const success = Math.random();
-
-  if (success > 0.7) {
+  if (risk > 6) {
     u.credits -= 20;
+    u.hp -= 5;
+    WORLD.chaosLevel += 1;
 
-    save();
+    saveAll();
 
-    return ctx.reply("💥 Exploit failed\n-20 credits");
+    return reply(ctx, `💥 Disaster Event\n${e.t}\nYou lost resources`);
   }
 
-  u.credits += 40;
-  u.xp += 15;
+  u.xp += e.r;
+  u.credits += Math.floor(e.r / 2);
 
-  save();
+  WORLD.chaosLevel += e.c;
 
-  ctx.reply("💰 Exploit successful\n+40 credits");
+  saveAll();
+
+  reply(ctx, `⚡ ${e.t}\n+${e.r} XP`);
 });
 
 /* =========================================================
-   MINING SYSTEM
+   MINING
 ========================================================= */
 
-bot.action("menu_mine", (ctx) => {
+onAction("mine", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+  if (!cdOk(u, "mine")) return ctx.answerCbQuery("Cooldown");
 
-  const reward =
-    10 +
-    Math.floor(Math.random() * 25) +
-    u.miningLevel * 5;
+  const gain = 10 + Math.floor(Math.random() * 30);
 
-  u.credits += reward;
-  u.xp += 10;
+  if (Math.random() < 0.2) {
+    u.hp -= 10;
+    u.credits += gain / 2;
 
-  if (Math.random() > 0.8) {
-    const item = rand([
-      "Quantum Ore",
-      "Ancient NFT",
-      "Dark Token",
-      "Meme Crystal"
-    ]);
-
-    u.inventory.push(item);
-
-    save();
-
-    return ctx.reply(
-      `⛏ Mining Success
-
-+${reward} credits
-🎁 Found item: ${item}`
-    );
+    saveAll();
+    return reply(ctx, `⛏ Accident!\n+${gain / 2} credits`);
   }
 
-  save();
+  u.credits += gain;
+  u.xp += 5;
 
-  ctx.reply(`⛏ Mining Success
-
-+${reward} credits`);
+  saveAll();
+  reply(ctx, `⛏ Mined +${gain}`);
 });
 
 /* =========================================================
-   CRIME SYSTEM
+   CRIME (HIGH RISK)
 ========================================================= */
 
-bot.action("menu_crime", (ctx) => {
+onAction("crime", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+  if (!cdOk(u, "crime")) return ctx.answerCbQuery("Cooldown");
 
-  const success = Math.random();
+  const success = Math.random() < 0.55;
 
-  if (success > 0.65) {
-    const gain = 30 + Math.floor(Math.random() * 70);
+  if (!success) {
+    const loss = 20 + Math.floor(Math.random() * 40);
+    u.credits = Math.max(0, u.credits - loss);
+    u.reputation -= 1;
 
-    u.credits += gain;
-    u.reputation += 1;
-
-    save();
-
-    return ctx.reply(
-      `🕶 Crime Successful
-
-+${gain} credits
-+1 reputation`
-    );
+    saveAll();
+    return reply(ctx, `🚔 Caught!\n-${loss}`);
   }
 
-  const loss = 15 + Math.floor(Math.random() * 30);
+  const gain = 40 + Math.floor(Math.random() * 80);
 
-  u.credits -= loss;
+  u.credits += gain;
+  u.reputation += 1;
 
-  if (u.credits < 0) {
-    u.credits = 0;
-  }
-
-  save();
-
-  ctx.reply(
-    `🚔 You got caught
-
--${loss} credits`
-  );
+  saveAll();
+  reply(ctx, `🕶 Crime success +${gain}`);
 });
 
 /* =========================================================
-   SHOP SYSTEM
+   DUEL QUEUE (REAL PLAYER INTERACTION)
 ========================================================= */
 
-bot.action("menu_shop", (ctx) => {
-  reply(
-    ctx,
-    `🏪 BLACK MARKET
+let duelQueue = [];
 
-1. Energy Drink — 50 credits
-2. Nano Armor — 100 credits
-3. Quantum Miner — 250 credits
-4. Luxury Apartment — 500 credits`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback("⚡ Buy Energy Drink", "buy_energy")],
-      [Markup.button.callback("🛡 Buy Nano Armor", "buy_armor")],
-      [Markup.button.callback("⛏ Buy Quantum Miner", "buy_miner")],
-      [Markup.button.callback("🏠 Buy Apartment", "buy_home")]
-    ])
-  );
-});
-
-bot.action("buy_energy", (ctx) => {
+onAction("duel_queue", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
 
-  if (u.credits < 50) {
-    return ctx.reply("Not enough credits");
+  if (duelQueue.includes(u.id)) {
+    duelQueue = duelQueue.filter((x) => x !== u.id);
+    return ctx.answerCbQuery("Left queue");
   }
 
-  u.credits -= 50;
-  u.energy += 25;
+  duelQueue.push(u.id);
 
-  save();
-
-  ctx.reply("⚡ Energy restored");
-});
-
-bot.action("buy_armor", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  if (u.credits < 100) {
-    return ctx.reply("Not enough credits");
+  if (duelQueue.length < 2) {
+    return ctx.answerCbQuery("Waiting opponent...");
   }
 
-  u.credits -= 100;
-  u.hp += 25;
+  const a = getUser(duelQueue.shift());
+  const b = getUser(duelQueue.shift());
 
-  save();
+  const wa = power(a) + Math.random() * 100;
+  const wb = power(b) + Math.random() * 100;
 
-  ctx.reply("🛡 Nano Armor equipped");
-});
+  const win = wa > wb ? a : b;
+  const lose = wa > wb ? b : a;
 
-bot.action("buy_miner", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
+  win.wins++;
+  lose.losses++;
 
-  if (u.credits < 250) {
-    return ctx.reply("Not enough credits");
-  }
+  win.xp += 30;
+  lose.xp += 10;
 
-  u.credits -= 250;
-  u.miningLevel += 1;
+  saveAll();
 
-  save();
-
-  ctx.reply("⛏ Mining level upgraded");
-});
-
-bot.action("buy_home", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  if (u.credits < 500) {
-    return ctx.reply("Not enough credits");
-  }
-
-  u.credits -= 500;
-  u.apartment = "Luxury Apartment";
-
-  save();
-
-  ctx.reply("🏠 Apartment upgraded");
+  reply(ctx, `⚔ DUEL\n🏆 ${win.name} defeated ${lose.name}`);
 });
 
 /* =========================================================
-   INVENTORY
-========================================================= */
-
-bot.action("menu_inventory", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  if (!u.inventory.length) {
-    return ctx.reply("🎒 Inventory empty");
-  }
-
-  let text = "🎒 INVENTORY\n\n";
-
-  u.inventory.forEach((item, i) => {
-    text += `${i + 1}. ${item}\n`;
-  });
-
-  ctx.reply(text);
-});
-
-/* =========================================================
-   DAILY REWARD
-========================================================= */
-
-bot.action("menu_daily", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  const now = Date.now();
-
-  if (now - u.lastDaily < 86400000) {
-    return ctx.reply("⏳ Daily already claimed");
-  }
-
-  u.lastDaily = now;
-
-  u.credits += 100;
-  u.xp += 25;
-
-  save();
-
-  ctx.reply(
-    "🎁 DAILY REWARD\n\n+100 Credits\n+25 XP"
-  );
-});
-
-/* =========================================================
-   WAR SYSTEM
-========================================================= */
-
-bot.command("war", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-
-  const reward = 20 + Math.floor(Math.random() * 40);
-
-  u.xp += reward;
-
-  addFactionScore(u.faction, reward);
-
-  addChaos(1);
-
-  save();
-
-  reply(
-    ctx,
-    `⚔ FACTION WAR
-
-${u.name} fought for ${u.faction}
-
-+${reward} XP`
-  );
-});
-
-bot.action("menu_war", (ctx) => {
-  bot.handleUpdate({
-    message: {
-      ...ctx.callbackQuery.message,
-      text: "/war"
-    },
-    from: ctx.from
-  });
-});
-
-/* =========================================================
-   BOSS SYSTEM
+   BOSS (SHARED WORLD EVENT)
 ========================================================= */
 
 function startBoss() {
-  WORLD.bossActive = true;
-
-  WORLD.bossHP =
-    500 + Math.floor(Math.random() * 1000);
+  WORLD.boss.active = true;
+  WORLD.boss.maxHp = 800 + Math.floor(Math.random() * 800);
+  WORLD.boss.hp = WORLD.boss.maxHp;
 }
 
-function damageBoss(amount) {
-  if (!WORLD.bossActive) return;
+function hitBoss(dmg) {
+  if (!WORLD.boss.active) return;
 
-  WORLD.bossHP -= amount;
+  WORLD.boss.hp -= dmg;
 
-  if (WORLD.bossHP <= 0) {
-    WORLD.bossActive = false;
+  if (WORLD.boss.hp <= 0) {
+    WORLD.boss.active = false;
 
     for (let id in DB) {
       DB[id].xp += 50;
       DB[id].credits += 50;
     }
 
-    broadcast(
-      "🐋 WORLD BOSS DESTROYED\nAll players rewarded"
-    );
+    broadcast("🐋 Boss defeated! Global reward distributed");
   }
+
+  saveAll();
 }
 
 function broadcast(msg) {
   for (let id in DB) {
-    bot.telegram
-      .sendMessage(id, msg)
-      .catch(() => {});
+    bot.telegram.sendMessage(id, msg).catch(() => {});
   }
 }
 
-bot.command("boss", (ctx) => {
-  if (!WORLD.bossActive) {
-    startBoss();
-  }
+onAction("boss", (ctx) => {
+  if (!WORLD.boss.active) startBoss();
 
-  reply(
-    ctx,
-    `🐋 WORLD BOSS
+  const u = getUser(ctx.from.id, ctx);
 
-HP: ${WORLD.bossHP}
-Chaos: ${WORLD.chaosLevel}`
-  );
-});
+  const dmg = 20 + Math.floor(Math.random() * 40);
+  hitBoss(dmg);
 
-bot.action("menu_boss", (ctx) => {
-  bot.handleUpdate({
-    message: {
-      ...ctx.callbackQuery.message,
-      text: "/boss"
-    },
-    from: ctx.from
-  });
-});
+  u.xp += 10;
 
-/* =========================================================
-   DUEL SYSTEM
-========================================================= */
+  saveAll();
 
-bot.command("duel", (ctx) => {
-  const parts = ctx.message.text.split(" ");
-
-  if (!parts[1]) {
-    return reply(ctx, "Use: /duel userId");
-  }
-
-  const a = getUser(ctx.from.id, ctx);
-  const b = getUser(parts[1]);
-
-  const powerA = getPower(a) + Math.random() * 100;
-  const powerB = getPower(b) + Math.random() * 100;
-
-  const winner = powerA > powerB ? a : b;
-  const loser = powerA > powerB ? b : a;
-
-  winner.xp += 30;
-  winner.wins += 1;
-
-  loser.losses += 1;
-
-  save();
-
-  reply(
-    ctx,
-    `⚔ DUEL RESULT
-
-🏆 Winner: ${winner.name}
-💀 Loser: ${loser.name}`
-  );
-});
-
-/* =========================================================
-   TRADE SYSTEM
-========================================================= */
-
-bot.command("trade", (ctx) => {
-  const parts = ctx.message.text.split(" ");
-
-  if (parts.length < 3) {
-    return reply(ctx, "Use: /trade userId amount");
-  }
-
-  const target = parts[1];
-  const amount = parseInt(parts[2]);
-
-  const sender = getUser(ctx.from.id, ctx);
-  const receiver = getUser(target);
-
-  if (sender.credits < amount) {
-    return reply(ctx, "Not enough credits");
-  }
-
-  sender.credits -= amount;
-  receiver.credits += amount;
-
-  save();
-
-  reply(
-    ctx,
-    `💰 Trade Complete
-
-Sent ${amount} credits`
-  );
-});
-
-/* =========================================================
-   GIFT SYSTEM
-========================================================= */
-
-bot.command("gift", (ctx) => {
-  const parts = ctx.message.text.split(" ");
-
-  if (parts.length < 3) {
-    return reply(ctx, "Use: /gift userId amount");
-  }
-
-  const target = parts[1];
-  const amount = parseInt(parts[2]);
-
-  const sender = getUser(ctx.from.id, ctx);
-  const receiver = getUser(target);
-
-  if (sender.credits < amount) {
-    return reply(ctx, "Not enough credits");
-  }
-
-  sender.credits -= amount;
-  receiver.credits += amount;
-
-  sender.xp += 10;
-  receiver.xp += 10;
-
-  save();
-
-  reply(
-    ctx,
-    `🎁 Gift Sent
-
-${amount} credits transferred`
-  );
+  reply(ctx, `🐋 Boss HP: ${WORLD.boss.hp}`);
 });
 
 /* =========================================================
    LEADERBOARD
 ========================================================= */
 
-function leaderboard() {
-  return Object.values(DB)
+onAction("lb", (ctx) => {
+  const top = Object.values(DB)
     .sort((a, b) => b.xp - a.xp)
     .slice(0, 10);
-}
 
-bot.command("leaderboard", (ctx) => {
-  const top = leaderboard();
-
-  let msg = "🏆 LEADERBOARD\n\n";
+  let msg = "🏆 Leaderboard\n\n";
 
   top.forEach((u, i) => {
-    msg += `${i + 1}. ${u.name} — ${u.xp} XP\n`;
+    msg += `${i + 1}. ${u.name} - ${u.xp}\n`;
   });
 
-  msg += "\n🌍 FACTION POWER\n";
-
-  for (let f in WORLD.factionScore) {
-    msg += `${f}: ${WORLD.factionScore[f]}\n`;
-  }
-
-  msg += `\n🔥 CHAOS LEVEL: ${WORLD.chaosLevel}`;
+  msg += `\n🔥 Chaos: ${WORLD.chaosLevel}`;
 
   reply(ctx, msg);
 });
 
-bot.action("menu_leaderboard", (ctx) => {
-  bot.handleUpdate({
-    message: {
-      ...ctx.callbackQuery.message,
-      text: "/leaderboard"
-    },
-    from: ctx.from
-  });
-});
-
-bot.action("menu_profile", (ctx) => {
-  bot.handleUpdate({
-    message: {
-      ...ctx.callbackQuery.message,
-      text: "/profile"
-    },
-    from: ctx.from
-  });
-});
-
 /* =========================================================
-   RANDOM WORLD EVENTS
+   WORLD CHAOS LOOP
 ========================================================= */
 
 setInterval(() => {
-  if (Math.random() > 0.92) {
-    addChaos(1);
-
-    broadcast(
-      "🌌 RANDOM WORLD EVENT\nChaos level increased"
-    );
+  if (Math.random() > 0.9) {
+    WORLD.chaosLevel++;
+    broadcast("🌌 Chaos rising...");
+    saveAll();
   }
-}, 120000);
+}, 60000);
 
 /* =========================================================
-   AUTO BOSS SPAWNER
+   START
 ========================================================= */
 
-setInterval(() => {
-  if (!WORLD.bossActive && Math.random() > 0.94) {
-    startBoss();
-
-    broadcast(
-      `🐋 WORLD BOSS HAS APPEARED
-
-HP: ${WORLD.bossHP}`
-    );
-  }
-}, 180000);
-
-/* =========================================================
-   SAVE LOOP
-========================================================= */
-
-setInterval(save, 15000);
-
-/* =========================================================
-   START BOT
-========================================================= */
+setInterval(saveAll, 15000);
 
 bot.launch();
-
-console.log("🌌 FOMO YODELVERSE RUNNING")
+console.log("YODELVERSE RUNNING");
