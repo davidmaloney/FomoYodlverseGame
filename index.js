@@ -1,8 +1,3 @@
-* =========================================================
- * YODELVERSE REBORN V6 — STABLE MULTIPLAYER CORE
- * =========================================================
- */
-
 const fs = require("fs");
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
