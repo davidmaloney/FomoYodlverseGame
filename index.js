@@ -1,21 +1,19 @@
 /**
  * =========================================================
- * 🌌 FOMO YODELVERSE — DEFINITIVE EDITION CORE
+ * 🌌 FOMO YODELVERSE — STABLE DEBUG EDITION
  * =========================================================
  *
- * Telegram Multiplayer Civilization Game
- * Designed for:
- * - Oracle Free Tier
- * - Single-file maintainability
- * - Telegram groups + topics
- * - Long-term expansion
- *
- * ENGINE GOALS:
- * - Stable
- * - Social
- * - Addictive
- * - Lightweight
- * - Easy to debug
+ * FIXED ISSUES:
+ * - cooldown crash
+ * - faction power bug
+ * - boss HP undefined crash
+ * - callback loading hangs
+ * - malformed leaderboard command
+ * - missing user safety checks
+ * - corrupted old save compatibility
+ * - Telegram callback timeout issues
+ * - safer broadcasting
+ * - better persistence stability
  *
  * =========================================================
  */
@@ -25,15 +23,20 @@ require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 
 /* =========================================================
-   LAYER 1 — BOT CORE
+   BOT CORE
 ========================================================= */
+
+if (!process.env.BOT_TOKEN) {
+  console.log("❌ Missing BOT_TOKEN in .env");
+  process.exit(1);
+}
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
 
 /* =========================================================
-   LAYER 2 — CONFIG
+   CONFIG
 ========================================================= */
 
 const CONFIG = {
@@ -57,7 +60,7 @@ const CONFIG = {
 };
 
 /* =========================================================
-   LAYER 3 — STORAGE
+   STORAGE
 ========================================================= */
 
 const DB_FILE = "./data.json";
@@ -65,18 +68,28 @@ const WORLD_FILE = "./world.json";
 
 function load(path, fallback) {
   try {
-    return JSON.parse(fs.readFileSync(path));
-  } catch {
+    if (!fs.existsSync(path)) {
+      return fallback;
+    }
+
+    const raw = fs.readFileSync(path, "utf8");
+
+    if (!raw || !raw.trim()) {
+      return fallback;
+    }
+
+    return JSON.parse(raw);
+  } catch (err) {
+    console.log("❌ LOAD ERROR:", err.message);
     return fallback;
   }
 }
 
 let DB = load(DB_FILE, {});
+
 let WORLD = load(WORLD_FILE, {
   season: 1,
-
   chaos: 1,
-
   marketState: "stable",
 
   boss: null,
@@ -89,7 +102,6 @@ let WORLD = load(WORLD_FILE, {
   },
 
   worldEvent: null,
-
   lastWorldEvent: 0
 });
 
@@ -99,34 +111,50 @@ function save() {
   dirty = true;
 }
 
-setInterval(() => {
-  if (!dirty) return;
-
+function forceSave() {
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
     fs.writeFileSync(WORLD_FILE, JSON.stringify(WORLD, null, 2));
 
     dirty = false;
+
     console.log("💾 Saved");
   } catch (err) {
     console.log("❌ SAVE ERROR:", err.message);
   }
+}
+
+setInterval(() => {
+  if (!dirty) return;
+  forceSave();
 }, CONFIG.SAVE_INTERVAL);
 
 /* =========================================================
-   LAYER 4 — SAFETY SYSTEMS
+   SAFETY
 ========================================================= */
 
 process.on("uncaughtException", (err) => {
-  console.log("❌ UNCAUGHT ERROR:", err);
+  console.log("❌ UNCAUGHT ERROR");
+  console.log(err);
 });
 
 process.on("unhandledRejection", (err) => {
-  console.log("❌ REJECTION:", err);
+  console.log("❌ REJECTION");
+  console.log(err);
+});
+
+process.on("SIGINT", () => {
+  forceSave();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  forceSave();
+  process.exit(0);
 });
 
 /* =========================================================
-   LAYER 5 — UTILITIES
+   UTILITIES
 ========================================================= */
 
 const rand = (arr) =>
@@ -142,22 +170,18 @@ function level(xp) {
   return Math.floor(xp / 100) + 1;
 }
 
-function power(u) {
-  return (
-    u.xp +
-    u.wins * 25 +
-    u.reputation * 15 +
-    u.credits * 0.15 +
-    u.prestige * 100
-  );
-}
-
 function isAdmin(id) {
   return CONFIG.ADMIN_IDS.includes(String(id));
 }
 
+function safeNumber(n, fallback = 0) {
+  return typeof n === "number" && !isNaN(n)
+    ? n
+    : fallback;
+}
+
 /* =========================================================
-   LAYER 6 — GAME DATA
+   GAME DATA
 ========================================================= */
 
 const CHARACTERS = [
@@ -223,78 +247,127 @@ const ITEMS = [
 ];
 
 /* =========================================================
-   LAYER 7 — THREAD SAFE REPLY
+   REPLY SYSTEM
 ========================================================= */
 
-function reply(ctx, text, extra = {}) {
-  const threadId =
-    ctx.message?.message_thread_id ||
-    ctx.callbackQuery?.message?.message_thread_id;
+async function reply(ctx, text, extra = {}) {
+  try {
+    const threadId =
+      ctx.message?.message_thread_id ||
+      ctx.callbackQuery?.message?.message_thread_id;
 
-  return ctx.reply(text, {
-    ...extra,
-    ...(threadId
-      ? { message_thread_id: threadId }
-      : {})
-  });
+    return await ctx.reply(text, {
+      ...extra,
+      ...(threadId
+        ? { message_thread_id: threadId }
+        : {})
+    });
+  } catch (err) {
+    console.log("❌ REPLY ERROR:", err.message);
+  }
+}
+
+async function ack(ctx) {
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 }
 
 /* =========================================================
-   LAYER 8 — USER SYSTEM
+   USER SYSTEM
 ========================================================= */
+
+function createUser(id, ctx = null) {
+  return {
+    id,
+
+    name: ctx?.from?.first_name || "Player",
+
+    username: ctx?.from?.username || "",
+
+    registered: false,
+
+    character: null,
+
+    faction: null,
+
+    xp: 0,
+
+    credits: CONFIG.START_CREDITS,
+
+    hp: CONFIG.MAX_HP,
+
+    energy: CONFIG.MAX_ENERGY,
+
+    wins: 0,
+
+    losses: 0,
+
+    reputation: 0,
+
+    prestige: 0,
+
+    inventory: [],
+
+    apartment: "Container Unit",
+
+    ship: "Rust Bucket",
+
+    miningLevel: 1,
+
+    hackingLevel: 1,
+
+    cooldowns: {},
+
+    lastDaily: 0,
+
+    wanted: false
+  };
+}
+
+function repairUser(u) {
+  if (!u.cooldowns || typeof u.cooldowns !== "object") {
+    u.cooldowns = {};
+  }
+
+  if (!Array.isArray(u.inventory)) {
+    u.inventory = [];
+  }
+
+  u.xp = safeNumber(u.xp);
+  u.credits = safeNumber(u.credits);
+  u.hp = safeNumber(u.hp, CONFIG.MAX_HP);
+  u.energy = safeNumber(u.energy, CONFIG.MAX_ENERGY);
+  u.wins = safeNumber(u.wins);
+  u.losses = safeNumber(u.losses);
+  u.reputation = safeNumber(u.reputation);
+  u.prestige = safeNumber(u.prestige);
+  u.miningLevel = safeNumber(u.miningLevel, 1);
+  u.hackingLevel = safeNumber(u.hackingLevel, 1);
+
+  return u;
+}
 
 function getUser(id, ctx = null) {
   if (!DB[id]) {
-    DB[id] = {
-      id,
-
-      name: ctx?.from?.first_name || "Player",
-
-      username: ctx?.from?.username || "",
-
-      registered: false,
-
-      character: null,
-      faction: null,
-
-      xp: 0,
-      credits: CONFIG.START_CREDITS,
-
-      hp: CONFIG.MAX_HP,
-      energy: CONFIG.MAX_ENERGY,
-
-      wins: 0,
-      losses: 0,
-
-      reputation: 0,
-      prestige: 0,
-
-      inventory: [],
-
-      apartment: "Container Unit",
-      ship: "Rust Bucket",
-
-      miningLevel: 1,
-      hackingLevel: 1,
-
-      cooldowns: {},
-
-      lastDaily: 0,
-
-      wanted: false
-    };
-
+    DB[id] = createUser(id, ctx);
     save();
   }
+
+  DB[id] = repairUser(DB[id]);
 
   return DB[id];
 }
 
 /* =========================================================
-   LAYER 9 — COOLDOWNS
+   COOLDOWNS
 ========================================================= */
 
 function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
+  if (!user.cooldowns) {
+    user.cooldowns = {};
+  }
+
   const last = user.cooldowns[key] || 0;
 
   if (now() - last < ms) {
@@ -307,7 +380,7 @@ function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
 }
 
 /* =========================================================
-   LAYER 10 — WORLD ENGINE
+   WORLD ENGINE
 ========================================================= */
 
 function addChaos(amount) {
@@ -328,7 +401,11 @@ function addChaos(amount) {
 }
 
 function addFactionPower(faction, amount) {
-  if (!WORLD.factions[faction]) return;
+  if (!faction) return;
+
+  if (WORLD.factions[faction] === undefined) {
+    WORLD.factions[faction] = 0;
+  }
 
   WORLD.factions[faction] += amount;
 
@@ -336,22 +413,22 @@ function addFactionPower(faction, amount) {
 }
 
 /* =========================================================
-   LAYER 11 — BROADCAST SYSTEM
+   BROADCAST
 ========================================================= */
 
-function broadcast(message) {
-  const ids = Object.keys(DB).slice(
-    0,
-    CONFIG.BROADCAST_LIMIT
-  );
+async function broadcast(message) {
+  const ids = Object.keys(DB)
+    .slice(0, CONFIG.BROADCAST_LIMIT);
 
-  ids.forEach((id) => {
-    bot.telegram.sendMessage(id, message).catch(() => {});
-  });
+  for (const id of ids) {
+    try {
+      await bot.telegram.sendMessage(id, message);
+    } catch {}
+  }
 }
 
 /* =========================================================
-   LAYER 12 — BOSS SYSTEM
+   BOSS SYSTEM
 ========================================================= */
 
 function spawnBoss() {
@@ -369,23 +446,35 @@ function spawnBoss() {
       CONFIG.BOSS_MIN_HP +
       Math.floor(
         Math.random() *
-          (CONFIG.BOSS_MAX_HP - CONFIG.BOSS_MIN_HP)
+        (
+          CONFIG.BOSS_MAX_HP -
+          CONFIG.BOSS_MIN_HP
+        )
       )
   };
 
   broadcast(
-    `🐋 WORLD BOSS SPAWNED\n\n${WORLD.boss.name}\nHP: ${WORLD.boss.hp}`
+`🐋 WORLD BOSS SPAWNED
+
+${WORLD.boss.name}
+
+HP: ${WORLD.boss.hp}`
   );
 
   save();
 }
 
 function damageBoss(amount) {
-  if (!WORLD.boss || !WORLD.boss.active) return;
+  if (!WORLD.boss || !WORLD.boss.active) {
+    return;
+  }
 
   WORLD.boss.hp -= amount;
 
   if (WORLD.boss.hp <= 0) {
+
+    WORLD.boss.hp = 0;
+
     WORLD.boss.active = false;
 
     Object.values(DB).forEach((p) => {
@@ -394,7 +483,9 @@ function damageBoss(amount) {
     });
 
     broadcast(
-      `🏆 ${WORLD.boss.name} DEFEATED\n\nAll citizens rewarded.`
+`🏆 ${WORLD.boss.name} DEFEATED
+
+All citizens rewarded.`
     );
 
     WORLD.chaos = clamp(
@@ -408,106 +499,149 @@ function damageBoss(amount) {
 }
 
 /* =========================================================
-   LAYER 13 — MAIN MENU
+   MENU
 ========================================================= */
 
 function homeMenu() {
   return Markup.inlineKeyboard([
+
     [
-      Markup.button.callback("⚡ EVENT", "event"),
-      Markup.button.callback("⛏ MINE", "mine")
+      Markup.button.callback(
+        "⚡ EVENT",
+        "event"
+      ),
+
+      Markup.button.callback(
+        "⛏ MINE",
+        "mine"
+      )
     ],
 
     [
-      Markup.button.callback("🕶 CRIME", "crime"),
-      Markup.button.callback("⚔ WAR", "war")
+      Markup.button.callback(
+        "🕶 CRIME",
+        "crime"
+      ),
+
+      Markup.button.callback(
+        "⚔ WAR",
+        "war"
+      )
     ],
 
     [
-      Markup.button.callback("🐋 BOSS", "boss"),
-      Markup.button.callback("📊 PROFILE", "profile")
+      Markup.button.callback(
+        "🐋 BOSS",
+        "boss"
+      ),
+
+      Markup.button.callback(
+        "📊 PROFILE",
+        "profile"
+      )
     ],
 
     [
-      Markup.button.callback("🎒 INVENTORY", "inventory"),
-      Markup.button.callback("🏪 MARKET", "market")
+      Markup.button.callback(
+        "🎒 INVENTORY",
+        "inventory"
+      ),
+
+      Markup.button.callback(
+        "🏪 MARKET",
+        "market"
+      )
     ],
 
     [
-      Markup.button.callback("🏆 LEADERBOARD", "leaderboard"),
-      Markup.button.callback("🎁 DAILY", "daily")
+      Markup.button.callback(
+        "🏆 LEADERBOARD",
+        "leaderboard"
+      ),
+
+      Markup.button.callback(
+        "🎁 DAILY",
+        "daily"
+      )
     ]
   ]);
 }
 
-function home(ctx, u) {
-  return reply(
-    ctx,
-`🌌 FOMO YODELVERSE
+function homeText(u) {
+  return `🌌 FOMO YODELVERSE
 
 👤 ${u.name}
-🧬 ${u.character}
-⚔ ${u.faction}
+
+🧬 ${u.character || "UNSET"}
+
+⚔ ${u.faction || "UNSET"}
 
 ⭐ Level: ${level(u.xp)}
+
 💰 Credits: ${u.credits}
+
 ❤️ HP: ${u.hp}
+
 ⚡ Energy: ${u.energy}
 
 🔥 Chaos Level: ${WORLD.chaos}
-🌍 Market: ${WORLD.marketState}
 
-💡 The universe reacts to player actions.`,
+🌍 Market: ${WORLD.marketState}`;
+}
+
+async function home(ctx, u) {
+  return reply(
+    ctx,
+    homeText(u),
     homeMenu()
   );
 }
 
 /* =========================================================
-   LAYER 14 — START / ONBOARDING
+   START
 ========================================================= */
 
-bot.start((ctx) => {
+bot.start(async (ctx) => {
+
   const u = getUser(ctx.from.id, ctx);
 
   if (u.registered) {
     return home(ctx, u);
   }
 
-  reply(
+  return reply(
     ctx,
 `🌌 WELCOME TO FOMO YODELVERSE
 
 Civilization collapsed after the Great Rugpull.
 
-Four factions now battle for control:
-⚔ HODL
-⚔ FOMO
-⚔ SCAM
-⚔ WHALE
-
-Your decisions affect the entire universe.
-
 Choose your identity.`,
     Markup.inlineKeyboard(
       CHARACTERS.map((c) => [
-        Markup.button.callback(c, "char_" + c)
+        Markup.button.callback(
+          c,
+          "char_" + c
+        )
       ])
     )
   );
 });
 
 /* =========================================================
-   LAYER 15 — CHARACTER FLOW
+   CHARACTER FLOW
 ========================================================= */
 
-bot.action(/char_(.+)/, (ctx) => {
+bot.action(/char_(.+)/, async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   u.character = ctx.match[1];
 
   save();
 
-  reply(
+  return reply(
     ctx,
 `⚔ Choose Your Faction
 
@@ -517,18 +651,26 @@ SCAM → Manipulation
 WHALE → Wealth`,
     Markup.inlineKeyboard(
       FACTIONS.map((f) => [
-        Markup.button.callback(f, "faction_" + f)
+        Markup.button.callback(
+          f,
+          "faction_" + f
+        )
       ])
     )
   );
 });
 
-bot.action(/faction_(.+)/, (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
+bot.action(/faction_(.+)/, async (ctx) => {
+
+  await ack(ctx);
 
   const faction = ctx.match[1];
 
-  if (!FACTIONS.includes(faction)) return;
+  if (!FACTIONS.includes(faction)) {
+    return;
+  }
+
+  const u = getUser(ctx.from.id, ctx);
 
   u.faction = faction;
   u.registered = true;
@@ -536,74 +678,91 @@ bot.action(/faction_(.+)/, (ctx) => {
   save();
 
   broadcast(
-    `🌌 ${u.name} joined the ${u.faction} faction`
+    `🌌 ${u.name} joined ${u.faction}`
   );
 
-  home(ctx, u);
+  return home(ctx, u);
 });
 
 /* =========================================================
-   LAYER 16 — PROFILE
+   PROFILE
 ========================================================= */
 
 function profileText(u) {
-  return `
-📊 PROFILE
+  return `📊 PROFILE
 
 👤 ${u.name}
+
 🧬 ${u.character}
+
 ⚔ ${u.faction}
 
 ⭐ Level: ${level(u.xp)}
+
 XP: ${u.xp}
 
 💰 Credits: ${u.credits}
 
 🏆 Wins: ${u.wins}
+
 💀 Losses: ${u.losses}
 
 🌟 Reputation: ${u.reputation}
+
 👑 Prestige: ${u.prestige}
 
 ⛏ Mining: ${u.miningLevel}
+
 🕶 Hacking: ${u.hackingLevel}
 
 🏠 ${u.apartment}
+
 🚀 ${u.ship}
 
-🚨 Wanted: ${u.wanted ? "YES" : "NO"}
-`;
+🚨 Wanted: ${u.wanted ? "YES" : "NO"}`;
 }
 
 bot.command("profile", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
-
-  reply(ctx, profileText(u));
+  return reply(ctx, profileText(u));
 });
 
-bot.action("profile", (ctx) => {
+bot.action("profile", async (ctx) => {
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
-  reply(ctx, profileText(u));
+  return reply(ctx, profileText(u));
 });
 
 /* =========================================================
-   LAYER 17 — EVENTS
+   EVENTS
 ========================================================= */
 
-bot.action("event", (ctx) => {
+bot.action("event", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!cooldownOk(u, "event")) {
-    return ctx.answerCbQuery("Cooldown active");
+    return reply(
+      ctx,
+      "⏳ Event cooldown active"
+    );
   }
 
   const e = rand(EVENTS);
 
-  const risk = e.risk + WORLD.chaos * 0.01;
+  const risk =
+    e.risk +
+    (WORLD.chaos * 0.01);
 
   if (Math.random() < risk) {
-    const loss = 15 + Math.floor(Math.random() * 25);
+
+    const loss =
+      15 +
+      Math.floor(Math.random() * 25);
 
     u.credits = clamp(
       u.credits - loss,
@@ -622,26 +781,31 @@ bot.action("event", (ctx) => {
 ${e.title}
 
 -${loss} Credits
-Chaos Increased`
+
+🔥 Chaos Increased`
     );
   }
 
   u.xp += e.xp;
   u.credits += e.credits;
 
-  addFactionPower(u.faction, e.xp);
+  addFactionPower(
+    u.faction,
+    e.xp
+  );
 
   addChaos(e.chaos);
 
   save();
 
-  reply(
+  return reply(
     ctx,
 `⚡ ${e.title}
 
 ${e.text}
 
 +${e.xp} XP
+
 +${e.credits} Credits
 
 🔥 Chaos: ${WORLD.chaos}`
@@ -649,57 +813,74 @@ ${e.text}
 });
 
 /* =========================================================
-   LAYER 18 — MINING
+   MINE
 ========================================================= */
 
-bot.action("mine", (ctx) => {
+bot.action("mine", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!cooldownOk(u, "mine")) {
-    return ctx.answerCbQuery("Cooldown active");
+    return reply(
+      ctx,
+      "⏳ Mining cooldown active"
+    );
   }
 
   const gain =
     15 +
     Math.floor(Math.random() * 35) +
-    u.miningLevel * 5;
+    (u.miningLevel * 5);
 
   u.credits += gain;
   u.xp += 5;
 
   let msg =
-    `⛏ Mining Operation Successful\n\n` +
-    `+${gain} Credits`;
+`⛏ Mining Operation Successful
+
++${gain} Credits`;
 
   if (Math.random() > 0.82) {
+
     const item = rand(ITEMS);
 
     u.inventory.push(item);
 
-    msg += `\n🎁 Rare Item Found: ${item}`;
+    msg += `
+
+🎁 Rare Item Found:
+${item}`;
   }
 
   save();
 
-  reply(ctx, msg);
+  return reply(ctx, msg);
 });
 
 /* =========================================================
-   LAYER 19 — CRIME
+   CRIME
 ========================================================= */
 
-bot.action("crime", (ctx) => {
+bot.action("crime", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!cooldownOk(u, "crime")) {
-    return ctx.answerCbQuery("Cooldown active");
+    return reply(
+      ctx,
+      "⏳ Crime cooldown active"
+    );
   }
 
-  const success = Math.random();
+  if (Math.random() < 0.45) {
 
-  if (success < 0.45) {
     const loss =
-      20 + Math.floor(Math.random() * 40);
+      20 +
+      Math.floor(Math.random() * 40);
 
     u.credits = clamp(
       u.credits - loss,
@@ -715,15 +896,15 @@ bot.action("crime", (ctx) => {
       ctx,
 `🚔 CRIME FAILED
 
-Authorities tracked your signal.
-
 -${loss} Credits
+
 🚨 You are now WANTED`
     );
   }
 
   const gain =
-    40 + Math.floor(Math.random() * 90);
+    40 +
+    Math.floor(Math.random() * 90);
 
   u.credits += gain;
   u.reputation += 1;
@@ -732,40 +913,49 @@ Authorities tracked your signal.
 
   save();
 
-  reply(
+  return reply(
     ctx,
 `🕶 BLACK MARKET SUCCESS
 
 +${gain} Credits
-+1 Reputation
 
-Rumors spread through the galaxy.`
++1 Reputation`
   );
 });
 
 /* =========================================================
-   LAYER 20 — WAR
+   WAR
 ========================================================= */
 
-bot.action("war", (ctx) => {
+bot.action("war", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!cooldownOk(u, "war", 8000)) {
-    return ctx.answerCbQuery("Faction cooldown");
+    return reply(
+      ctx,
+      "⏳ War cooldown active"
+    );
   }
 
   const reward =
-    20 + Math.floor(Math.random() * 50);
+    20 +
+    Math.floor(Math.random() * 50);
 
   u.xp += reward;
 
-  addFactionPower(u.faction, reward);
+  addFactionPower(
+    u.faction,
+    reward
+  );
 
   addChaos(2);
 
   save();
 
-  reply(
+  return reply(
     ctx,
 `⚔ FACTION CONFLICT
 
@@ -778,10 +968,13 @@ ${u.name} fought for ${u.faction}
 });
 
 /* =========================================================
-   LAYER 21 — BOSS RAID
+   BOSS
 ========================================================= */
 
-bot.action("boss", (ctx) => {
+bot.action("boss", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!WORLD.boss || !WORLD.boss.active) {
@@ -789,7 +982,8 @@ bot.action("boss", (ctx) => {
   }
 
   const dmg =
-    25 + Math.floor(Math.random() * 50);
+    25 +
+    Math.floor(Math.random() * 50);
 
   damageBoss(dmg);
 
@@ -797,26 +991,35 @@ bot.action("boss", (ctx) => {
 
   save();
 
-  reply(
+  const hp =
+    WORLD.boss?.hp || 0;
+
+  return reply(
     ctx,
 `🐋 RAID ATTACK
 
 💥 Damage: ${dmg}
 
-Remaining HP:
-${Math.max(0, WORLD.boss.hp)}`
+❤️ Remaining HP:
+${hp}`
   );
 });
 
 /* =========================================================
-   LAYER 22 — INVENTORY
+   INVENTORY
 ========================================================= */
 
-bot.action("inventory", (ctx) => {
+bot.action("inventory", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (!u.inventory.length) {
-    return reply(ctx, "🎒 Inventory Empty");
+    return reply(
+      ctx,
+      "🎒 Inventory Empty"
+    );
   }
 
   let msg = "🎒 INVENTORY\n\n";
@@ -825,15 +1028,18 @@ bot.action("inventory", (ctx) => {
     msg += `${i + 1}. ${item}\n`;
   });
 
-  reply(ctx, msg);
+  return reply(ctx, msg);
 });
 
 /* =========================================================
-   LAYER 23 — MARKET
+   MARKET
 ========================================================= */
 
-bot.action("market", (ctx) => {
-  reply(
+bot.action("market", async (ctx) => {
+
+  await ack(ctx);
+
+  return reply(
     ctx,
 `🏪 BLACK MARKET
 
@@ -873,11 +1079,17 @@ bot.action("market", (ctx) => {
   );
 });
 
-bot.action("buy_energy", (ctx) => {
+bot.action("buy_energy", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (u.credits < 50) {
-    return reply(ctx, "Not enough credits");
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
   }
 
   u.credits -= 50;
@@ -890,14 +1102,23 @@ bot.action("buy_energy", (ctx) => {
 
   save();
 
-  reply(ctx, "⚡ Energy restored");
+  return reply(
+    ctx,
+    "⚡ Energy restored"
+  );
 });
 
-bot.action("buy_armor", (ctx) => {
+bot.action("buy_armor", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (u.credits < 100) {
-    return reply(ctx, "Not enough credits");
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
   }
 
   u.credits -= 100;
@@ -910,14 +1131,23 @@ bot.action("buy_armor", (ctx) => {
 
   save();
 
-  reply(ctx, "🛡 Armor equipped");
+  return reply(
+    ctx,
+    "🛡 Armor equipped"
+  );
 });
 
-bot.action("buy_drill", (ctx) => {
+bot.action("buy_drill", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (u.credits < 250) {
-    return reply(ctx, "Not enough credits");
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
   }
 
   u.credits -= 250;
@@ -926,36 +1156,48 @@ bot.action("buy_drill", (ctx) => {
 
   save();
 
-  reply(
+  return reply(
     ctx,
-    `⛏ Mining upgraded to level ${u.miningLevel}`
+`⛏ Mining upgraded
+
+Level ${u.miningLevel}`
   );
 });
 
-bot.action("buy_home", (ctx) => {
+bot.action("buy_home", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (u.credits < 500) {
-    return reply(ctx, "Not enough credits");
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
   }
 
   u.credits -= 500;
 
-  u.apartment = "Luxury Sky Apartment";
+  u.apartment =
+    "Luxury Sky Apartment";
 
   save();
 
-  reply(
+  return reply(
     ctx,
-    "🏠 Your social status increased"
+    "🏠 Apartment upgraded"
   );
 });
 
 /* =========================================================
-   LAYER 24 — DAILY REWARD
+   DAILY
 ========================================================= */
 
-bot.action("daily", (ctx) => {
+bot.action("daily", async (ctx) => {
+
+  await ack(ctx);
+
   const u = getUser(ctx.from.id, ctx);
 
   if (
@@ -964,7 +1206,7 @@ bot.action("daily", (ctx) => {
   ) {
     return reply(
       ctx,
-      "⏳ Daily reward already claimed"
+      "⏳ Daily already claimed"
     );
   }
 
@@ -975,20 +1217,22 @@ bot.action("daily", (ctx) => {
 
   save();
 
-  reply(
+  return reply(
     ctx,
 `🎁 DAILY REWARD
 
 +100 Credits
+
 +25 XP`
   );
 });
 
 /* =========================================================
-   LAYER 25 — LEADERBOARD
+   LEADERBOARD
 ========================================================= */
 
-bot.action("leaderboard", (ctx) => {
+function leaderboardText() {
+
   const top = Object.values(DB)
     .sort((a, b) => b.xp - a.xp)
     .slice(0, 10);
@@ -996,72 +1240,134 @@ bot.action("leaderboard", (ctx) => {
   let msg = "🏆 LEADERBOARD\n\n";
 
   top.forEach((u, i) => {
-    msg += `${i + 1}. ${u.name} — ${u.xp} XP\n`;
+    msg +=
+`${i + 1}. ${u.name}
+${u.xp} XP\n\n`;
   });
 
-  msg += `\n⚔ FACTION POWER\n`;
+  msg += "⚔ FACTION POWER\n\n";
 
-  for (let f in WORLD.factions) {
+  for (const f in WORLD.factions) {
     msg += `${f}: ${WORLD.factions[f]}\n`;
   }
 
   msg += `\n🔥 Chaos: ${WORLD.chaos}`;
 
-  reply(ctx, msg);
+  return msg;
+}
+
+bot.action("leaderboard", async (ctx) => {
+
+  await ack(ctx);
+
+  return reply(
+    ctx,
+    leaderboardText()
+  );
+});
+
+bot.command("leaderboard", (ctx) => {
+  return reply(
+    ctx,
+    leaderboardText()
+  );
 });
 
 /* =========================================================
-   LAYER 26 — ADMIN TOOLS
+   MENU
+========================================================= */
+
+bot.command("menu", (ctx) => {
+
+  const u = getUser(ctx.from.id, ctx);
+
+  return home(ctx, u);
+});
+
+/* =========================================================
+   ADMIN
 ========================================================= */
 
 bot.command("broadcast", (ctx) => {
-  if (!isAdmin(ctx.from.id)) return;
 
-  const msg = ctx.message.text.replace(
-    "/broadcast",
-    ""
+  if (!isAdmin(ctx.from.id)) {
+    return;
+  }
+
+  const msg =
+    ctx.message.text.replace(
+      "/broadcast",
+      ""
+    ).trim();
+
+  if (!msg) {
+    return reply(
+      ctx,
+      "Usage: /broadcast message"
+    );
+  }
+
+  broadcast(
+`📢 ADMIN ALERT
+
+${msg}`
   );
 
-  broadcast(`📢 ADMIN ALERT\n\n${msg}`);
-
-  reply(ctx, "Broadcast sent");
+  return reply(
+    ctx,
+    "✅ Broadcast sent"
+  );
 });
 
 bot.command("spawnboss", (ctx) => {
-  if (!isAdmin(ctx.from.id)) return;
+
+  if (!isAdmin(ctx.from.id)) {
+    return;
+  }
 
   spawnBoss();
 
-  reply(ctx, "Boss spawned");
+  return reply(
+    ctx,
+    "🐋 Boss spawned"
+  );
 });
 
 bot.command("chaos", (ctx) => {
-  if (!isAdmin(ctx.from.id)) return;
+
+  if (!isAdmin(ctx.from.id)) {
+    return;
+  }
 
   const amount = parseInt(
     ctx.message.text.split(" ")[1]
   );
 
   if (isNaN(amount)) {
-    return reply(ctx, "Use: /chaos number");
+    return reply(
+      ctx,
+      "Usage: /chaos number"
+    );
   }
 
   WORLD.chaos = amount;
 
   save();
 
-  reply(
+  return reply(
     ctx,
-    `Chaos level set to ${amount}`
+`🔥 Chaos set to ${amount}`
   );
 });
 
 /* =========================================================
-   LAYER 27 — RANDOM WORLD EVENTS
+   RANDOM EVENTS
 ========================================================= */
 
 setInterval(() => {
+
   if (Math.random() > 0.90) {
+
     addChaos(1);
 
     const msg = rand([
@@ -1074,13 +1380,15 @@ setInterval(() => {
 
     broadcast(msg);
   }
+
 }, 120000);
 
 /* =========================================================
-   LAYER 28 — AUTO MARKET SHIFTS
+   MARKET SHIFTS
 ========================================================= */
 
 setInterval(() => {
+
   WORLD.marketState = rand([
     "stable",
     "bullish",
@@ -1089,36 +1397,31 @@ setInterval(() => {
   ]);
 
   save();
+
 }, 300000);
 
 /* =========================================================
-   LAYER 29 — COMMAND SHORTCUTS
+   FALLBACK
 ========================================================= */
 
-bot.command("menu", (ctx) => {
+bot.on("message", (ctx) => {
+
+  if (
+    ctx.message.text &&
+    ctx.message.text.startsWith("/")
+  ) {
+    return;
+  }
+
   const u = getUser(ctx.from.id, ctx);
 
-  home(ctx, u);
-});
-
-bot.command("leaderboard", (ctx) => {
-  bot.handleUpdate({
-    message: {
-      ...ctx.message,
-      text: "leaderboard"
-    },
-    from: ctx.from
-  });
+  return home(ctx, u);
 });
 
 /* =========================================================
-   LAYER 30 — START ENGINE
+   START ENGINE
 ========================================================= */
 
 bot.launch();
 
 console.log("🚀 FOMO YODELVERSE ONLINE");
-
-/* =========================================================
-   END OF FILE
-========================================================= */
