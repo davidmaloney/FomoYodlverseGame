@@ -2346,29 +2346,32 @@ bot.use((ctx, next) => {
 FALLBACK
 ========================================================= */
 
-bot.on(
-"message",
-(ctx) => {
+bot.on("message", async (ctx) => {
+  if (!ctx.from) return;
 
-  if (
-    ctx.message.text &&
-    ctx.message.text.startsWith(
-      "/"
-    )
-  ) {
-    return;
-  }
-
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
-    );
+  const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
-  return home(ctx, u);
-}
-);
+
+  // PRIVATE CHAT → full game
+  if (ctx.chat.type === "private") {
+    return home(ctx, u);
+  }
+
+  // GROUP / TOPIC → ONLY start button
+  return reply(
+    ctx,
+    "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+    Markup.inlineKeyboard([
+      [
+        Markup.button.url(
+          "🚀 START GAME",
+          `https://t.me/${process.env.BOT_USERNAME}?start=hub`
+        )
+      ]
+    ])
+  );
+});
 
 /* =========================================================
 START ENGINE
