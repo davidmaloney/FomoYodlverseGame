@@ -1740,48 +1740,46 @@ INVENTORY
 ========================================================= */
 
 bot.action(
-"inventory",
-async (ctx) => {
+  "inventory",
+  async (ctx) => {
 
-  await ack(ctx);
+    await ack(ctx);
 
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
-    );
+    const u =
+      getUser(
+        ctx.from.id,
+        ctx
+      );
 
-  if (checkDeath(ctx, u)) return;
+    if (checkDeath(ctx, u)) return;
 
-  if (
-    !u.inventory.length
-  ) {
-
-    return reply(
-      ctx,
-      "🎒 Inventory Empty"
-    );
-  }
-
-  let msg =
-    "🎒 INVENTORY\n\n";
-
-  u.inventory.forEach(
-    (
-      item,
-      i
-    ) => {
-
-      msg +=
-`${i + 1}. ${item}\n`;
+    if (!u.inventory.length) {
+      return reply(
+        ctx,
+        "🎒 Inventory Empty"
+      );
     }
-  );
 
-  return reply(
-    ctx,
-    msg
-  );
-}
+    let msg = "🎒 INVENTORY\n\n";
+
+    u.inventory.forEach((item, i) => {
+
+      // backward compatibility (old string items)
+      if (typeof item === "string") {
+        msg += `${i + 1}. ${item}\n`;
+        return;
+      }
+
+      // new structured items
+      const name = item?.name || "Unknown Item";
+      const rarity = item?.rarity ? ` (${item.rarity})` : "";
+      const power = item?.power ? ` [PWR ${item.power}]` : "";
+
+      msg += `${i + 1}. ${name}${rarity}${power}\n`;
+    });
+
+    return reply(ctx, msg);
+  }
 );
 
 /* =========================================================
