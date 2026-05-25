@@ -381,11 +381,24 @@ DEATH SYSTEM (AUTHORITATIVE)
 
 function killPlayer(ctx, user) {
   if (!user) return;
-  if (user.dead === true) return; // Prevent duplicate triggers
+  if (user.dead === true) return;
 
   user.hp = 0;
   user.dead = true;
   user.deathTime = now();
+
+  // 💀 XP LOSS (50%)
+  user.xp = Math.max(0, Math.floor(user.xp * 0.5));
+
+  // 🎒 INVENTORY LOSS (50% random removal)
+  if (Array.isArray(user.inventory) && user.inventory.length > 0) {
+    const lossCount = Math.floor(user.inventory.length * 0.5);
+
+    for (let i = 0; i < lossCount; i++) {
+      const idx = Math.floor(Math.random() * user.inventory.length);
+      user.inventory.splice(idx, 1);
+    }
+  }
 
   save();
 
@@ -393,7 +406,8 @@ function killPlayer(ctx, user) {
     ctx,
 `💀 YOU HAVE BEEN ELIMINATED
 
-Your consciousness has been scattered across the fractured chain.
+☠ XP reduced by 50%
+🎒 50% of your inventory was lost
 
 Use /respawn to return to the Yodelverse.`
   );
