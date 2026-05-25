@@ -2269,28 +2269,28 @@ FALLBACK
 bot.on("message", async (ctx) => {
   if (!ctx.from) return;
 
+  // GROUP / TOPIC → ONLY show entry button (no game logic)
+  if (ctx.chat?.type !== "private") {
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${process.env.BOT_USERNAME}?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  // PRIVATE CHAT → now safe to touch game state
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // PRIVATE CHAT → full game
-  if (ctx.chat.type === "private") {
-    return home(ctx, u);
-  }
-
-  // GROUP / TOPIC → ONLY start button
-  return reply(
-    ctx,
-    "🌌 FOMO YODELVERSE\n\nEnter your private game:",
-    Markup.inlineKeyboard([
-      [
-        Markup.button.url(
-          "🚀 START GAME",
-          `https://t.me/${process.env.BOT_USERNAME}?start=hub`
-        )
-      ]
-    ])
-  );
+  return home(ctx, u);
 });
 
 /* =========================================================
