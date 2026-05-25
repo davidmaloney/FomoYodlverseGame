@@ -412,7 +412,49 @@ function killPlayer(ctx, user) {
 Use /respawn to return to the Yodelverse.`
   );
 }
+/* =========================================================
+REBIRTH SYSTEM
+========================================================= */
 
+const REBIRTH_CONFIG = {
+  xpKeepRatio: 0.25,
+  creditBonus: 100,
+  energyRestore: true,
+  hpReset: true,
+  rebirthCooldown: 1000 * 60 * 10 // optional 10 min lock
+};
+
+function canRebirth(user) {
+  if (!user.dead) return false;
+  if (!user.deathTime) return true;
+
+  const elapsed = now() - user.deathTime;
+  return elapsed > REBIRTH_CONFIG.rebirthCooldown;
+}
+
+function rebirthPlayer(user) {
+  if (!user.dead) return user;
+
+  // ⏳ gate (optional but recommended)
+  if (!canRebirth(user)) return null;
+
+  // 🧬 rebirth transformation
+  user.dead = false;
+  user.hp = CONFIG.MAX_HP;
+
+  user.xp = Math.floor(user.xp * REBIRTH_CONFIG.xpKeepRatio);
+  user.credits += REBIRTH_CONFIG.creditBonus;
+
+  if (REBIRTH_CONFIG.energyRestore) {
+    user.energy = CONFIG.MAX_ENERGY;
+  }
+
+  user.prestige = (user.prestige || 0) + 1;
+
+  user.deathTime = null;
+
+  return user;
+}
 /* =========================================================
 SESSION SYSTEM
 ========================================================= */
