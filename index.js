@@ -538,89 +538,116 @@ GAME DATA
 ========================================================= */
 
 const CHARACTERS = [
-"R2D5",
-"Darth Fader",
-"Fan Solo",
-"Princess Liquidia",
-"Jabba the Whale"
+  "R2D5",
+  "Darth Fader",
+  "Fan Solo",
+  "Princess Liquidia",
+  "Jabba the Whale"
 ];
 
 const FACTIONS = [
-"HODL",
-"FOMO",
-"SCAM",
-"WHALE"
+  "HODL",
+  "FOMO",
+  "SCAM",
+  "WHALE"
 ];
 
 const EVENTS = [
-{
-  title:
-    "Whale Manipulation",
-
-  text:
-    "Massive liquidity distortion detected.",
-
-  xp: 20,
-  credits: 15,
-
-  chaos: 2,
-
-  risk: 0.25
-},
-
-{
-  title:
-    "Meme Coin Frenzy",
-
-  text:
-    "Speculators flood the markets.",
-
-  xp: 15,
-  credits: 20,
-
-  chaos: 1,
-
-  risk: 0.15
-},
-
-{
-  title:
-    "Shadow Rugpull",
-
-  text:
-    "Entire sectors collapse instantly.",
-
-  xp: 35,
-  credits: 30,
-
-  chaos: 3,
-
-  risk: 0.40
-},
-
-{
-  title:
-    "Quantum Pump",
-
-  text:
-    "Unknown forces trigger hypergrowth.",
-
-  xp: 50,
-  credits: 40,
-
-  chaos: 4,
-
-  risk: 0.50
-}
+  {
+    title: "Whale Manipulation",
+    text: "Massive liquidity distortion detected.",
+    xp: 20,
+    credits: 15,
+    chaos: 2,
+    risk: 0.25
+  },
+  {
+    title: "Meme Coin Frenzy",
+    text: "Speculators flood the markets.",
+    xp: 15,
+    credits: 20,
+    chaos: 1,
+    risk: 0.15
+  },
+  {
+    title: "Shadow Rugpull",
+    text: "Entire sectors collapse instantly.",
+    xp: 35,
+    credits: 30,
+    chaos: 3,
+    risk: 0.40
+  },
+  {
+    title: "Quantum Pump",
+    text: "Unknown forces trigger hypergrowth.",
+    xp: 50,
+    credits: 40,
+    chaos: 4,
+    risk: 0.50
+  }
 ];
 
+/* =========================================================
+ITEM SYSTEM (UPGRADED)
+========================================================= */
+
 const ITEMS = [
-"Dark Token",
-"Quantum Ore",
-"Ancient NFT",
-"Meme Crystal",
-"Whale Fragment",
-"Forbidden Ledger"
+  {
+    id: "scrap_token",
+    name: "Scrap Token",
+    rarity: "common",
+    power: 1,
+    type: "resource"
+  },
+  {
+    id: "glitch_shard",
+    name: "Glitch Shard",
+    rarity: "common",
+    power: 2,
+    type: "resource"
+  },
+  {
+    id: "dark_token",
+    name: "Dark Token",
+    rarity: "rare",
+    power: 4,
+    type: "resource"
+  },
+  {
+    id: "quantum_ore",
+    name: "Quantum Ore",
+    rarity: "rare",
+    power: 6,
+    type: "resource"
+  },
+  {
+    id: "meme_crystal",
+    name: "Meme Crystal",
+    rarity: "epic",
+    power: 10,
+    type: "boost"
+  },
+  {
+    id: "whale_fragment",
+    name: "Whale Fragment",
+    rarity: "epic",
+    power: 12,
+    type: "boost"
+  },
+  {
+    id: "forbidden_ledger",
+    name: "Forbidden Ledger",
+    rarity: "legendary",
+    power: 25,
+    type: "relic"
+  },
+  {
+    id: "void_core",
+    name: "Void Core",
+    rarity: "legendary",
+    power: 30,
+    type: "relic"
+  }
 ];
 
 /* =========================================================
