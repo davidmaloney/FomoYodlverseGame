@@ -274,6 +274,27 @@ return typeof n === "number" &&
 }
 
 /* =========================================================
+DEATH HELPERS (FIX 2 PATCH)
+========================================================= */
+
+function isDead(user) {
+  return !!user?.dead;
+}
+
+function checkDeath(ctx, user) {
+  if (!user) return false;
+
+  if (!user.dead) return false;
+
+  // Optional auto-sync safety: ensure hp is consistent
+  if (user.hp > 0) {
+    user.hp = 0;
+  }
+
+  return true;
+}
+
+/* =========================================================
 ANTISPAM + ATOMIC SAFETY
 ========================================================= */
 
@@ -425,7 +446,7 @@ const REBIRTH_CONFIG = {
 };
 
 function canRebirth(user) {
-  if (!user.dead) return false;
+  if (!user || !user.dead) return false;
   if (!user.deathTime) return true;
 
   const elapsed = now() - user.deathTime;
@@ -433,14 +454,17 @@ function canRebirth(user) {
 }
 
 function rebirthPlayer(user) {
-  if (!user.dead) return user;
+  if (!user || !user.dead) return user;
 
   // ⏳ gate (optional but recommended)
   if (!canRebirth(user)) return null;
 
   // 🧬 rebirth transformation
   user.dead = false;
-  user.hp = CONFIG.MAX_HP;
+
+  if (REBIRTH_CONFIG.hpReset) {
+    user.hp = CONFIG.MAX_HP;
+  }
 
   user.xp = Math.floor(user.xp * REBIRTH_CONFIG.xpKeepRatio);
   user.credits += REBIRTH_CONFIG.creditBonus;
@@ -1241,10 +1265,29 @@ DEATH COMMANDS
 
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+
   if (!isDead(u)) {
     return reply(ctx, "✅ You are not dead.");
   }
-  respawn(u);
+
+  // 🔁 FIX 1: wire respawn into rebirth system (no external respawn() call)
+  const revived = rebirthPlayer(u);
+
+  if (!revived) {
+    const waitTime =
+      REBIRTH_CONFIG.rebirthCooldown -
+      (now() - u.deathTime);
+
+    const seconds = Math.ceil(waitTime / 1000);
+
+    return reply(
+      ctx,
+      `⏳ Rebirth not ready yet.\n\nTry again in ${seconds}s`
+    );
+  }
+
+  save();
+
   return home(ctx, u);
 });
 
