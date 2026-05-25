@@ -2413,7 +2413,10 @@ bot.on("message", async (ctx) => {
   if (!ctx.from) return;
 
   // GROUP / TOPIC → ONLY show entry button (no game logic)
-  if (ctx.chat?.type !== "private") {
+  if (!ctx.chat || ctx.chat.type !== "private") {
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
     return reply(
       ctx,
       "🌌 FOMO YODELVERSE\n\nEnter your private game:",
@@ -2421,7 +2424,7 @@ bot.on("message", async (ctx) => {
         [
           Markup.button.url(
             "🚀 START GAME",
-            `https://t.me/${process.env.BOT_USERNAME}?start=hub`
+            `https://t.me/${botUsername}?start=hub`
           )
         ]
       ])
