@@ -440,182 +440,97 @@ SESSION SYSTEM
 ========================================================= */
 
 function signSession(id) {
-
-return crypto
-  .createHmac(
-    "sha256",
-    CONFIG.SESSION_SECRET
-  )
-  .update(id)
-  .digest("hex");
+  return crypto
+    .createHmac("sha256", CONFIG.SESSION_SECRET)
+    .update(id)
+    .digest("hex");
 }
 
-function createSession(
-userId,
-topicId
-) {
+function createSession(userId, topicId) {
+  const id = crypto.randomBytes(16).toString("hex");
+  const sig = signSession(id);
 
-const id =
-  crypto.randomBytes(16)
-    .toString("hex");
+  SESSIONS[id] = {
+    userId,
+    topicId: topicId ?? null,
+    created: now(),
+    sig
+  };
 
-const sig =
-  signSession(id);
+  save();
 
-SESSIONS[id] = {
-  userId,
-  topicId:
-    topicId || null,
-
-  created: now(),
-
-  sig
-};
-
-save();
-
-return `${id}.${sig}`;
+  return `${id}.${sig}`;
 }
 
-function validateSession(
-token
-) {
+function validateSession(token) {
+  try {
+    if (!token) return null;
 
-try {
+    const parts = token.split(".");
+    if (parts.length !== 2) return null;
 
-  if (!token) return null;
+    const [id, sig] = parts;
 
-  const parts =
-    token.split(".");
+    if (signSession(id) !== sig) return null;
 
-  if (parts.length !== 2) {
+    const session = SESSIONS[id];
+    if (!session) return null;
+
+    if (session.sig !== sig) return null;
+
+    if (now() - session.created > CONFIG.SESSION_TTL) {
+      delete SESSIONS[id];
+      save();
+      return null;
+    }
+
+    return session;
+  } catch {
     return null;
   }
-
-  const [id, sig] = parts;
-
-  const expected =
-    signSession(id);
-
-  if (sig !== expected) {
-    return null;
-  }
-
-  const session =
-    SESSIONS[id];
-
-  if (!session) {
-    return null;
-  }
-
-  if (
-    session.sig !== sig
-  ) {
-    return null;
-  }
-
-  if (
-    now() - session.created >
-    CONFIG.SESSION_TTL
-  ) {
-
-    delete SESSIONS[id];
-
-    save();
-
-    return null;
-  }
-
-  return session;
-
-} catch {
-
-  return null;
-}
 }
 
 function cleanupSessions() {
+  let changed = false;
 
-let changed = false;
+  for (const id in SESSIONS) {
+    const s = SESSIONS[id];
 
-for (const id in SESSIONS) {
-
-  const s = SESSIONS[id];
-
-  if (
-    now() - s.created >
-    CONFIG.SESSION_TTL
-  ) {
-
-    delete SESSIONS[id];
-
-    changed = true;
+    if (now() - s.created > CONFIG.SESSION_TTL) {
+      delete SESSIONS[id];
+      changed = true;
+    }
   }
+
+  if (changed) save();
 }
 
-if (changed) {
-  save();
-}
-}
+setInterval(cleanupSessions, 3600000);
 
-setInterval(
-cleanupSessions,
-3600000
-);
+function resolveSessionFromCtx(ctx) {
+  const payload = ctx.startPayload;
 
-function resolveSessionFromCtx(
-ctx
-) {
+  if (typeof payload === "string" && payload.startsWith("session_")) {
+    const token = payload.slice("session_".length);
+    return validateSession(token);
+  }
 
-const payload =
-  ctx.startPayload;
-
-if (
-  payload &&
-  payload.startsWith(
-    "session_"
-  )
-) {
-
-  const token =
-    payload.replace(
-      "session_",
-      ""
-    );
-
-  return validateSession(
-    token
-  );
+  return null;
 }
 
-return null;
-}
+function hubPrivateLink(userId, ctx) {
+  const topicId =
+    ctx.message?.message_thread_id ||
+    ctx.callbackQuery?.message?.message_thread_id ||
+    null;
 
-function hubPrivateLink(
-userId,
-ctx
-) {
+  const token = createSession(userId, topicId);
 
-const topicId =
-  ctx.message
-    ?.message_thread_id ||
-  ctx.callbackQuery
-    ?.message
-    ?.message_thread_id ||
-  null;
+  const botUsername =
+    process.env.BOT_USERNAME ||
+    "FOMOYODELverseBot";
 
-const token =
-  createSession(
-    userId,
-    topicId
-  );
-
-const botUsername =
-  process.env
-    .BOT_USERNAME ||
-  "FOMOYODELverseBot";
-
-return `https://t.me/${botUsername}?start=session_${token}`;
+  return `https://t.me/${botUsername}?start=session_${token}`;
 }
 
 /* =========================================================
