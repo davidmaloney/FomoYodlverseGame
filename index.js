@@ -1487,64 +1487,64 @@ MINE
 ========================================================= */
 
 bot.action(
-"mine",
-async (ctx) => {
+  "mine",
+  async (ctx) => {
 
-  await ack(ctx);
+    await ack(ctx);
 
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
-    );
+    const u =
+      getUser(
+        ctx.from.id,
+        ctx
+      );
 
-  if (checkDeath(ctx, u)) return;
-  if (!cooldownOk(u, "mine")) {
-    return reply(ctx, "⏳ Mining cooldown active");
-  }
+    if (checkDeath(ctx, u)) return;
 
-  const gain =
-    15 +
-    Math.floor(
-      Math.random() * 35
-    ) +
-    (
-      u.miningLevel *
-      5
-    );
+    if (!cooldownOk(u, "mine")) {
+      return reply(ctx, "⏳ Mining cooldown active");
+    }
 
-  u.credits += gain;
-  u.xp += 5;
+    const gain =
+      15 +
+      Math.floor(Math.random() * 35) +
+      (u.miningLevel * 5);
 
-  let msg =
+    u.credits += gain;
+    u.xp += 5;
+
+    let msg =
 `⛏ Mining Operation Successful
 
 +${gain} Credits`;
 
-  if (
-    Math.random() > 0.82
-  ) {
+    // 🎁 LOOT SYSTEM UPGRADED
+    if (Math.random() > 0.82) {
 
-    const item =
-      rand(ITEMS);
+      const item = rand(ITEMS);
 
-    u.inventory.push(
-      item
-    );
+      // safety: ensure structured format works even if future changes happen
+      const loot = typeof item === "string"
+        ? {
+            id: item.toLowerCase().replace(/\s+/g, "_"),
+            name: item,
+            rarity: "common",
+            power: 1,
+            type: "legacy"
+          }
+        : item;
 
-    msg += `
+      u.inventory.push(loot);
+
+      msg += `
 
 🎁 Rare Item Found:
-${item}`;
+${loot.name} (${loot.rarity})`;
+    }
+
+    save();
+
+    return reply(ctx, msg);
   }
-
-  save();
-
-  return reply(
-    ctx,
-    msg
-  );
-}
 );
 
 /* =========================================================
