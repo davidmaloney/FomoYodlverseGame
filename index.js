@@ -2343,9 +2343,23 @@ GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
 ========================================================= */
 
 bot.use((ctx, next) => {
- if (!ctx.from) return;
- if (!antiSpam(ctx.from.id)) return;
- return next();
+  if (!ctx.from) return;
+
+  if (!antiSpam(ctx.from.id)) {
+    // soft feedback so users don’t think bot is frozen
+    try {
+      if (ctx.callbackQuery) {
+        ctx.answerCbQuery("⏳ Slow down a bit", { show_alert: false });
+      } else {
+        ctx.reply("⏳ Slow down a bit");
+      }
+    } catch (err) {
+      console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+    }
+    return;
+  }
+
+  return next();
 });
 
 /* =========================================================
