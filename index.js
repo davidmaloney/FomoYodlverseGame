@@ -613,7 +613,7 @@ const token =
 const botUsername =
   process.env
     .BOT_USERNAME ||
-  "YOUR_BOT_USERNAME";
+  "FOMOYODELverseBot";
 
 return `https://t.me/${botUsername}?start=session_${token}`;
 }
