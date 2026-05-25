@@ -907,28 +907,26 @@ COOLDOWNS
 ========================================================= */
 
 function cooldownOk(
-user,
-key,
-ms = CONFIG.COOLDOWN
+  user,
+  key,
+  ms = CONFIG.COOLDOWN
 ) {
+  if (!user) return false;
 
-if (!user.cooldowns) {
-  user.cooldowns = {};
-}
+  if (!user.cooldowns || typeof user.cooldowns !== "object") {
+    user.cooldowns = {};
+  }
 
-const last =
-  user.cooldowns[key] || 0;
+  const nowTime = now();
+  const last = user.cooldowns[key] || 0;
 
-if (
-  now() - last < ms
-) {
-  return false;
-}
+  if (nowTime - last < ms) {
+    return false;
+  }
 
-user.cooldowns[key] =
-  now();
+  user.cooldowns[key] = nowTime;
 
-return true;
+  return true;
 }
 
 /* =========================================================
