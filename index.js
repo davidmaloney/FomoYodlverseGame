@@ -379,11 +379,6 @@ function transaction(callback) {
 DEATH SYSTEM (AUTHORITATIVE)
 ========================================================= */
 
-function isDead(user) {
-  if (!user) return true;
-  return (user.hp <= 0 || user.dead === true);
-}
-
 function killPlayer(ctx, user) {
   if (!user) return;
   if (user.dead === true) return; // Prevent duplicate triggers
@@ -402,37 +397,6 @@ Your consciousness has been scattered across the fractured chain.
 
 Use /respawn to return to the Yodelverse.`
   );
-}
-
-function checkDeath(ctx, user) {
-  if (!user) return true;
-  if (user.dead === true) return true;
-
-  if (user.hp <= 0) {
-    killPlayer(ctx, user);
-    return true;
-  }
-  return false;
-}
-
-function respawn(user) {
-  if (!user) return;
-
-  user.hp = CONFIG.MAX_HP;
-  user.energy = CONFIG.MAX_ENERGY;
-  user.dead = false;
-  delete user.deathTime;
-
-  // Clean residual cooldowns that might block gameplay
-  if (user.cooldowns) {
-    Object.keys(user.cooldowns).forEach(key => {
-      if (typeof user.cooldowns[key] === 'number') {
-        user.cooldowns[key] = 0; // Allow immediate action after respawn
-      }
-    });
-  }
-
-  save();
 }
 
 /* =========================================================
