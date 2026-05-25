@@ -99,92 +99,133 @@ const DB_FILE = "./data.json";
 const WORLD_FILE = "./world.json";
 const SESSION_FILE = "./sessions.json";
 
+/* =========================================================
+LOAD (SAFE)
+========================================================= */
+
 function load(path, fallback) {
+  try {
+    if (!fs.existsSync(path)) return fallback;
 
-try {
+    const raw = fs.readFileSync(path, "utf8");
 
-  if (!fs.existsSync(path)) {
+    if (!raw || !raw.trim()) return fallback;
+
+    const parsed = JSON.parse(raw);
+
+    // extra safety: prevent corrupt object types
+    if (typeof parsed !== "object" || parsed === null) {
+      return fallback;
+    }
+
+    return parsed;
+
+  } catch (err) {
+    console.log("❌ LOAD ERROR:", path, err.message);
     return fallback;
   }
-
-  const raw =
-    fs.readFileSync(path, "utf8");
-
-  if (!raw || !raw.trim()) {
-    return fallback;
-  }
-
-  return JSON.parse(raw);
-
-} catch (err) {
-
-  console.log(
-    "❌ LOAD ERROR:",
-    err.message
-  );
-
-  return fallback;
 }
-}
+
+/* =========================================================
+IN-MEMORY STATE
+========================================================= */
 
 let DB = load(DB_FILE, {});
-
 let WORLD = load(WORLD_FILE, {
-season: 1,
-chaos: 1,
-marketState: "stable",
-
-boss: null,
-
-factions: {
-  HODL: 0,
-  FOMO: 0,
-  SCAM: 0,
-  WHALE: 0
-}
+  season: 1,
+  chaos: 1,
+  marketState: "stable",
+  boss: null,
+  factions: {
+    HODL: 0,
+    FOMO: 0,
+    SCAM: 0,
+    WHALE: 0
+  }
 });
 
-let SESSIONS =
-load(SESSION_FILE, {});
-
+let SESSIONS = load(SESSION_FILE, {});
 let dirty = false;
 
+/* =========================================================
+SAVE FLAG
+========================================================= */
+
 function save() {
-dirty = true;
+  dirty = true;
 }
+
+/* =========================================================
+ATOMIC WRITE (HARDENED)
+========================================================= */
 
 function atomicWrite(file, data) {
- const temp = `${file}.tmp`;
+  const temp = `${file}.tmp`;
+  const backup = `${file}.bak`;
 
- fs.writeFileSync(
-   temp,
-   JSON.stringify(data, null, 2)
- );
+  try {
+    // 1. Backup current file before overwrite
+    if (fs.existsSync(file)) {
+      fs.copyFileSync(file, backup);
+    }
 
- fs.renameSync(temp, file);
+    // 2. Write temp file first
+    fs.writeFileSync(
+      temp,
+      JSON.stringify(data, null, 2)
+    );
+
+    // 3. Validate written JSON before committing
+    const check = JSON.parse(fs.readFileSync(temp, "utf8"));
+
+    if (!check || typeof check !== "object") {
+      throw new Error("Validation failed");
+    }
+
+    // 4. Commit replace
+    fs.renameSync(temp, file);
+
+  } catch (err) {
+    console.log("❌ ATOMIC WRITE FAILED:", file, err.message);
+
+    // 5. Recovery fallback
+    try {
+      if (fs.existsSync(backup)) {
+        fs.copyFileSync(backup, file);
+        console.log("♻️ Restored backup:", file);
+      }
+    } catch (restoreErr) {
+      console.log("❌ BACKUP RESTORE FAILED:", restoreErr.message);
+    }
+  }
 }
+
+/* =========================================================
+FORCE SAVE (SAFE)
+========================================================= */
 
 function forceSave() {
- try {
-   atomicWrite(DB_FILE, DB);
-   atomicWrite(WORLD_FILE, WORLD);
-   atomicWrite(SESSION_FILE, SESSIONS);
+  try {
+    atomicWrite(DB_FILE, DB);
+    atomicWrite(WORLD_FILE, WORLD);
+    atomicWrite(SESSION_FILE, SESSIONS);
 
-   dirty = false;
+    dirty = false;
 
-   console.log("💾 Saved");
+    console.log("💾 Saved safely");
 
- } catch (err) {
-   console.log("❌ SAVE ERROR:", err.message);
- }
+  } catch (err) {
+    console.log("❌ SAVE ERROR:", err.message);
+  }
 }
 
+/* =========================================================
+AUTO SAVE LOOP
+========================================================= */
+
 setInterval(() => {
-
-if (!dirty) return;
-
-forceSave();
-
+  if (!dirty) return;
+  forceSave();
 }, CONFIG.SAVE_INTERVAL);
 
 /* =========================================================
