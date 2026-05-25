@@ -1225,47 +1225,52 @@ START + STARTUP FLOW (FIXED ORDER)
 ========================================================= */
 
 bot.start(async (ctx) => {
+  const session = resolveSessionFromCtx(ctx);
 
-const session =
-  resolveSessionFromCtx(
-    ctx
-  );
+  // 🚫 HARD RULE: gameplay only in private chat
+  if (ctx.chat?.type !== "private") {
+    return reply(
+      ctx,
+      "👉 Please open the bot in private chat to start the game."
+    );
+  }
 
-let u;
+  // Identity rule: user always belongs to themselves
+  const userId = ctx.from.id;
 
-if (session) {
-  u = getUser(session.userId, ctx);
-} else {
-  u = getUser(ctx.from.id, ctx);
-}
+  // Session is ONLY extra context, never identity override
+  const u = getUser(userId, ctx);
 
-// Authoritative startup order
-if (checkDeath(ctx, u)) {
-  return reply(ctx, `💀 You are dead.\n\nUse /respawn to return to the Yodelverse.`);
-}
+  // Optional: you can still validate session if you want later,
+  // but it must NOT replace user identity anymore
 
-if (u.registered) {
-  return home(ctx, u);
-}
+  // Death check
+  if (checkDeath(ctx, u)) {
+    return reply(
+      ctx,
+      "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
+    );
+  }
 
-return reply(
-  ctx,
-`🌌 WELCOME TO FOMO YODELVERSE
+  // Returning player → straight to home
+  if (u.registered) {
+    return home(ctx, u);
+  }
+
+  // New player flow
+  return reply(
+    ctx,
+    `🌌 WELCOME TO FOMO YODELVERSE
 
 Civilization collapsed after the Great Rugpull.
 
 Choose your identity.`,
-  Markup.inlineKeyboard(
-    CHARACTERS.map(
-      (c) => [
-        Markup.button.callback(
-          c,
-          "char_" + c
-        )
-      ]
+    Markup.inlineKeyboard(
+      CHARACTERS.map((c) => [
+        Markup.button.callback(c, "char_" + c)
+      ])
     )
-  )
-);
+  );
 });
 
 /* =========================================================
