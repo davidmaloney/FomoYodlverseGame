@@ -1,3 +1,4 @@
+cat > /mnt/user-data/outputs/bot.js << 'ENDOFFILE'
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
