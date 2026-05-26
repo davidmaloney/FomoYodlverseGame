@@ -1,4 +1,3 @@
-```javascript
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
