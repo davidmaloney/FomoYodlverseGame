@@ -2436,10 +2436,16 @@ bot.use((ctx, next) => {
 FALLBACK
 ========================================================= */
 
+/* =========================================================
+FALLBACK (CLEAN + SAFE ROUTING)
+========================================================= */
+
 bot.on("message", async (ctx) => {
   if (!ctx.from) return;
 
-  // GROUP / TOPIC → ONLY show entry button (no game logic)
+  const text = ctx.message?.text || "";
+
+  // 🧠 GROUP SAFETY (KEEP THIS)
   if (!ctx.chat || ctx.chat.type !== "private") {
     const botUsername =
       process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
@@ -2458,11 +2464,17 @@ bot.on("message", async (ctx) => {
     );
   }
 
-  // PRIVATE CHAT → now safe to touch game state
+  // ❌ ONLY allow explicit game entry
+  if (!text.startsWith("/game")) {
+    return;
+  }
+
+  // 🧠 SAFE USER LOAD (KEEP THIS)
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
+  // 🎮 ENTER GAME ONLY HERE
   return home(ctx, u);
 });
 
