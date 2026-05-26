@@ -2470,8 +2470,63 @@ bot.on("message", async (ctx) => {
 START ENGINE
 ========================================================= */
 
-bot.launch();
+/* =========================================================
+START ENGINE
+========================================================= */
 
-console.log(
-"🚀 FOMO YODELVERSE ONLINE + HUB SYSTEM ACTIVE"
-);
+/**
+ * /start is now DISABLED for gameplay.
+ * It only tells users to use /game.
+ */
+bot.start(async (ctx) => {
+  return reply(
+    ctx,
+    "🚀 /start is not used in this game anymore.\n\nType /game to enter the Yodelverse."
+  );
+});
+
+/**
+ * MAIN ENTRY POINT
+ * This is now the ONLY way into the game flow.
+ */
+bot.command("game", async (ctx) => {
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) return;
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+
+Press START to enter the Yodelverse.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("🚀 START", "start_game")
+      ]
+    ])
+  );
+});
+
+/**
+ * START BUTTON HANDLER
+ * This fixes: "user doesn't exist" / broken START button
+ */
+bot.action("start_game", async (ctx) => {
+  await ack(ctx);
+
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) return;
+
+  // mark user as active in the system
+  u.registered = true;
+  save();
+
+  return reply(
+    ctx,
+    `🚀 Welcome to the Yodelverse.`,
+    homeMenu(u.id, ctx)
+  );
+});
