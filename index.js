@@ -1121,94 +1121,91 @@ MENU
 ========================================================= */
 
 function homeMenu(
-userId,
-ctx
+  userId,
+  ctx
 ) {
 
-const rows = [
+  const rows = [
 
-  [
-    Markup.button.callback(
-      "⚡ EVENT",
-      "event"
-    ),
+    [
+      Markup.button.callback(
+        "⚡ EVENT",
+        "event"
+      ),
 
-    Markup.button.callback(
-      "⛏ MINE",
-      "mine"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🕶 CRIME",
-      "crime"
-    ),
-
-    Markup.button.callback(
-      "⚔ WAR",
-      "war"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🐋 BOSS",
-      "boss"
-    ),
-
-    Markup.button.callback(
-      "📊 PROFILE",
-      "profile"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🎒 INVENTORY",
-      "inventory"
-    ),
-
-    Markup.button.callback(
-      "🏪 MARKET",
-      "market"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🏆 LEADERBOARD",
-      "leaderboard"
-    ),
-
-    Markup.button.callback(
-      "🎁 DAILY",
-      "daily"
-    )
-  ]
-];
-
-if (CONFIG.HUB_MODE) {
-
-  rows.push([
-    Markup.button.url(
-      "🚀 OPEN PRIVATE GAME",
-      hubPrivateLink(
-        userId,
-        ctx
+      Markup.button.callback(
+        "⛏ MINE",
+        "mine"
       )
-    )
-  ]);
-}
+    ],
 
-return Markup.inlineKeyboard(
-  rows
-);
+    [
+      Markup.button.callback(
+        "🕶 CRIME",
+        "crime"
+      ),
+
+      Markup.button.callback(
+        "⚔ WAR",
+        "war"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🐋 BOSS",
+        "boss"
+      ),
+
+      Markup.button.callback(
+        "📊 PROFILE",
+        "profile"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🎒 INVENTORY",
+        "inventory"
+      ),
+
+      Markup.button.callback(
+        "🏪 MARKET",
+        "market"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🏆 LEADERBOARD",
+        "leaderboard"
+      ),
+
+      Markup.button.callback(
+        "🎁 DAILY",
+        "daily"
+      )
+    ]
+  ];
+
+  if (CONFIG.HUB_MODE) {
+    rows.push([
+      Markup.button.url(
+        "🚀 OPEN PRIVATE GAME",
+        hubPrivateLink(
+          userId,
+          ctx
+        )
+      )
+    ]);
+  }
+
+  return Markup.inlineKeyboard(rows);
 }
 
 function homeText(u) {
 
-return `🌌 FOMO YODELVERSE
+  return `🌌 FOMO YODELVERSE
 
 👤 ${u.name}
 
@@ -1230,9 +1227,28 @@ return `🌌 FOMO YODELVERSE
 }
 
 async function home(
-ctx,
-u
+  ctx,
+  u
 ) {
+
+  // 🔒 FIX: ENTRY GATE (prevents menu bypass at startup layer)
+  // This ensures home() is NOT a hidden second entry point.
+
+  const session = resolveSessionFromCtx(ctx);
+
+  const hasValidSession = !!session;
+
+  const hasStartedGame = u.registered === true;
+
+  // If user is NOT in a valid game state, block menu access
+  if (!hasValidSession && !hasStartedGame) {
+
+    return reply(
+      ctx,
+      "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
+    );
+  }
+
   // Enforce death check before showing home
   if (checkDeath(ctx, u)) {
     return reply(ctx, "💀 You are dead. Use /respawn to continue.");
@@ -1252,24 +1268,29 @@ START + STARTUP FLOW (FIXED ORDER)
 bot.start(async (ctx) => {
   const session = resolveSessionFromCtx(ctx);
 
-  // 🚫 HARD RULE: gameplay only in private chat
+  // 🚫 GROUP SAFETY: never allow gameplay entry here
   if (ctx.chat?.type !== "private") {
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
     return reply(
       ctx,
-      "👉 Please open the bot in private chat to start the game."
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${botUsername}?start=hub`
+          )
+        ]
+      ])
     );
   }
 
-  // Identity rule: user always belongs to themselves
   const userId = ctx.from.id;
-
-  // Session is ONLY extra context, never identity override
   const u = getUser(userId, ctx);
 
-  // Optional: you can still validate session if you want later,
-  // but it must NOT replace user identity anymore
-
-  // Death check
+  // 💀 death gate (kept global safety)
   if (checkDeath(ctx, u)) {
     return reply(
       ctx,
@@ -1277,24 +1298,30 @@ bot.start(async (ctx) => {
     );
   }
 
-  // Returning player → straight to home
-  if (u.registered) {
-    return home(ctx, u);
+  // 🧠 HUB SESSION ENTRY (optional future expansion)
+  if (session) {
+    // session is valid context, but still does NOT auto-launch gameplay
+    // it only confirms entry route
   }
 
-  // New player flow
+  // ❗ FIX #1: STOP AUTO GAME ENTRY
+  // Previously: u.registered → home(ctx,u)
+  // NOW: we ALWAYS show START ENTRY SCREEN first
+
+  const startButton = Markup.inlineKeyboard([
+    [
+      Markup.button.callback("🚀 START", "start_game")
+    ]
+  ]);
+
   return reply(
     ctx,
-    `🌌 WELCOME TO FOMO YODELVERSE
+    `🌌 FOMO YODELVERSE
 
 Civilization collapsed after the Great Rugpull.
 
-Choose your identity.`,
-    Markup.inlineKeyboard(
-      CHARACTERS.map((c) => [
-        Markup.button.callback(c, "char_" + c)
-      ])
-    )
+Press START to enter the Yodelverse.`,
+    startButton
   );
 });
 
