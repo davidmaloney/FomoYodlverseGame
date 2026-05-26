@@ -2560,3 +2560,5 @@ bot.action("start_game", async (ctx) => {
 
   return home(ctx, u);
 });
+bot.launch();
+console.log("🚀 FOMO YODELVERSE ONLINE");
