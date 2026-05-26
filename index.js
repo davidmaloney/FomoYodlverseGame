@@ -2378,11 +2378,27 @@ bot.on("message", async (ctx) => {
   if (!ctx.from) return;
 
   const text = ctx.message?.text || "";
+  const isPrivate = ctx.chat?.type === "private";
 
-  // 🧠 GROUP SAFETY (KEEP THIS)
-  if (!ctx.chat || ctx.chat.type !== "private") {
+  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
+  if (!isPrivate) {
+
     const botUsername =
       process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    const mentioned =
+      ctx.message?.entities?.some(
+        (e) => e.type === "mention"
+      );
+
+    const isCommandTrigger =
+      text.startsWith("/start") ||
+      text.startsWith("/game");
+
+    // 🚫 IMPORTANT: do NOT respond to normal group chatter
+    if (!mentioned && !isCommandTrigger) {
+      return; // silent ignore (THIS FIXES YOUR LOOP)
+    }
 
     return reply(
       ctx,
@@ -2391,26 +2407,23 @@ bot.on("message", async (ctx) => {
         [
           Markup.button.url(
             "🚀 START GAME",
-            `https://t.me/${botUsername}?start=hub`
+            `https://t.me/${
+              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
+            }?start=hub`
           )
         ]
       ])
     );
   }
 
-  // ❌ FIX #3: NEVER let fallback become hidden gameplay entry
-  // Only respond to /game explicitly, everything else is ignored safely
-  if (!text.startsWith("/game")) {
-    return;
-  }
-
-  // 🧠 SAFE USER LOAD (KEEP THIS)
+  // 🧠 PRIVATE CHAT RULES (UNCHANGED BEHAVIOR, BUT CLEAN)
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // 🚫 FIX #3: DO NOT auto-enter gameplay here
-  // This must NOT route directly into home()
+  // Only respond to /game in private fallback mode
+  if (!text.startsWith("/game")) return;
+
   return reply(
     ctx,
     `🌌 FOMO YODELVERSE
@@ -2419,9 +2432,7 @@ Use /game to enter the Yodelverse properly.
 
 Press START to begin your journey.`,
     Markup.inlineKeyboard([
-      [
-        Markup.button.callback("🚀 START", "start_game")
-      ]
+      [Markup.button.callback("🚀 START", "start_game")]
     ])
   );
 });
