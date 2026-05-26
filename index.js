@@ -171,7 +171,146 @@ const level = xp  => Math.floor(xp / 100) + 1;
 const isAdmin = id => CONFIG.ADMIN_IDS.includes(String(id));
 const safeNumber = (n, fallback = 0) =>
   typeof n === "number" && !isNaN(n) ? n : fallback;
+/* =========================================================
+   🌌 START ORGANISER — DROP-IN ENTRY CONTROLLER
+   (NO OTHER CODE CHANGES REQUIRED)
+========================================================= */
 
+/**
+ * This becomes the ONLY entry gate for the game.
+ * It safely wraps /start, /game, fallback, and deep links
+ * without requiring you to edit the rest of the code.
+ */
+
+async function START_ORGANISER(ctx, next) {
+  try {
+    if (!ctx.from) return;
+
+    const u = getUser(ctx.from.id, ctx);
+    const text = ctx.message?.text || "";
+    const isPrivate = ctx.chat?.type === "private";
+
+    const session = resolveSessionFromCtx(ctx);
+    const isGameCmd = text === "/game" || text.startsWith("/game@");
+    const isStartCmd = text.startsWith("/start");
+
+    // -------------------------------
+    // 💀 DEAD USER GATE
+    // -------------------------------
+    if (checkDeath(ctx, u)) {
+      await reply(ctx, "💀 You are dead.\n\nUse /respawn or ♻️ REBIRTH to return.");
+      return;
+    }
+
+    // -------------------------------
+    // 🌍 GROUP CHAT → ALWAYS DEEP LINK
+    // -------------------------------
+    if (!isPrivate) {
+      if (!isGameCmd) return next ? next() : null;
+
+      const link = hubPrivateLink(ctx.from.id, ctx);
+
+      await reply(ctx,
+        "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
+        Markup.inlineKeyboard([
+          [Markup.button.url("🎮 ENTER THE YODELVERSE", link)]
+        ])
+      );
+      return;
+    }
+
+    // -------------------------------
+    // 🔗 DEEP LINK ENTRY (PRIVATE)
+    // -------------------------------
+    if (session) {
+      if (!u.registered) {
+        if (!u.character) u.character = rand(CHARACTERS);
+        if (!u.faction)   u.faction   = rand(FACTIONS);
+
+        u.registered = true;
+        save();
+        broadcast(`🌌 ${u.name} joined ${u.faction}`);
+
+        await reply(ctx,
+`🌌 Welcome to the FOMO YODELVERSE, ${u.name}!
+
+🧬 Character: ${u.character}
+⚔ Faction: ${u.faction}
+
+The Yodelverse awaits.`
+        );
+      }
+
+      await home(ctx, u);
+      return;
+    }
+
+    // -------------------------------
+    // 👤 RETURNING REGISTERED USER
+    // -------------------------------
+    if (u.registered) {
+      await reply(ctx,
+        `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
+      );
+
+      await home(ctx, u);
+      return;
+    }
+
+    // -------------------------------
+    // 🚀 NEW USER ENTRY
+    // -------------------------------
+    const isEntryAttempt =
+      isStartCmd ||
+      isGameCmd ||
+      text === "";
+
+    if (!isEntryAttempt) {
+      await reply(ctx,
+        "🌌 FOMO YODELVERSE\n\nUse /start or /game to enter.",
+        Markup.inlineKeyboard([
+          [Markup.button.callback("🚀 START", "start_game")]
+        ])
+      );
+      return;
+    }
+
+    await reply(ctx,
+`🌌 FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+The blockchain is now a warzone.
+
+Press START to enter the Yodelverse.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🚀 START", "start_game")]
+      ])
+    );
+
+  } catch (err) {
+    console.log("❌ START_ORGANISER ERROR:", err.message);
+  }
+}
+
+/**
+ * SAFETY WRAPPER:
+ * This automatically plugs into your bot without touching handlers.
+ */
+bot.use((ctx, next) => {
+  // only intercept entry-related flows
+  const text = ctx.message?.text || "";
+  const isEntry =
+    text.startsWith("/start") ||
+    text.startsWith("/game") ||
+    ctx.startPayload ||
+    ctx.chat?.type !== "private";
+
+  if (isEntry) {
+    return START_ORGANISER(ctx, next);
+  }
+
+  return next();
+});
 /* =========================================================
    DEATH HELPERS
 ========================================================= */
