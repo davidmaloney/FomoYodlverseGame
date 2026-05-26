@@ -2434,33 +2434,33 @@ save();
 GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
 ========================================================= */
 
-bot.use((ctx, next) => {
+bot.use(async (ctx, next) => {
   if (!ctx.from) return;
 
-  // Use separate anti-spam for callback queries vs messages
-  if (ctx.callbackQuery) {
-    const allowed = antiSpamCallback(ctx.from.id);
-    if (!allowed) {
-      try {
-        ctx.answerCbQuery("⏳ Slow down a bit").catch(() => {});
-      } catch (err) {
-        console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+  try {
+    if (ctx.callbackQuery) {
+      const allowed = antiSpamCallback(ctx.from.id);
+      if (!allowed) {
+        try {
+          await ctx.answerCbQuery("⏳ Slow down a bit");
+        } catch {}
+        return;
       }
-      return;
-    }
-  } else {
-    const allowed = antiSpam(ctx.from.id);
-    if (!allowed) {
-      try {
-        ctx.reply("⏳ Slow down a bit").catch(() => {});
-      } catch (err) {
-        console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+    } else {
+      const allowed = antiSpam(ctx.from.id);
+      if (!allowed) {
+        try {
+          await ctx.reply("⏳ Slow down a bit");
+        } catch {}
+        return;
       }
-      return;
     }
-  }
 
-  return next();
+    return await next();
+  } catch (err) {
+    console.log("❌ MIDDLEWARE ERROR:", err.message);
+    return;
+  }
 });
 
 
@@ -2474,12 +2474,10 @@ bot.on("message", async (ctx) => {
   const text = ctx.message?.text || "";
   const isPrivate = ctx.chat?.type === "private";
 
-  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
+  // -------------------------
+  // GROUP CHAT BEHAVIOR
+  // -------------------------
   if (!isPrivate) {
-
-    const botUsername =
-      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
-
     const mentioned =
       ctx.message?.entities?.some(
         (e) => e.type === "mention"
@@ -2500,38 +2498,41 @@ bot.on("message", async (ctx) => {
         [
           Markup.button.url(
             "🚀 START GAME",
-            `https://t.me/${
-              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
-            }?start=hub`
+            `https://t.me/${process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"}?start=hub`
           )
         ]
       ])
     );
   }
 
-  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
+  // -------------------------
+  // PRIVATE CHAT BEHAVIOR
+  // -------------------------
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // PATCH: unified entry control (/start + /game only)
-  const allowedPrivateEntry =
+  // IMPORTANT FIX:
+  // do NOT block everything else — just guide user
+  const isEntryCommand =
     text.startsWith("/game") ||
     text.startsWith("/start");
 
-  if (!allowedPrivateEntry) return;
+  if (!isEntryCommand) {
+    return reply(
+      ctx,
+      `🌌 FOMO YODELVERSE
 
-  return reply(
-    ctx,
-    `🌌 FOMO YODELVERSE
+Use /start or /game to enter the world.
 
-Use /game to enter the Yodelverse properly.
+Or press the START button below.`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🚀 START", "start_game")]
+      ])
+    );
+  }
 
-Press START to begin your journey.`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback("🚀 START", "start_game")]
-    ])
-  );
+  return;
 });
 
 /* =========================================================
