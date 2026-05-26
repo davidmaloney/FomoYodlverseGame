@@ -1,4 +1,3 @@
-cat > /mnt/user-data/outputs/bot.js << 'ENDOFFILE'
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
@@ -2677,7 +2676,3 @@ console.log("➡️ Launch call executed");
 bot.launch()
   .then(() => console.log("🌌 FOMO YODELVERSE ONLINE"))
   .catch((err) => console.error("❌ Launch error:", err));
-ENDOFFILE
-echo "Done. Lines: $(wc -l < /mnt/user-data/outputs/bot.js)"
-
-
