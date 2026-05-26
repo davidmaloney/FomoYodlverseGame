@@ -397,7 +397,7 @@ function antiSpam(userId, ms = 1200) {
  return true;
 }
 
-function antiSpamCallback(userId, ms = 800) {
+function antiSpamCallback(userId, ms = 1200) {
  const last = CALLBACK_SPAM[userId] || 0;
 
  if (now() - last < ms) {
