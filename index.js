@@ -2436,9 +2436,8 @@ bot.on("message", async (ctx) => {
       text.startsWith("/start") ||
       text.startsWith("/game");
 
-    // 🚫 IMPORTANT: do NOT respond to normal group chatter
     if (!mentioned && !isCommandTrigger) {
-      return; // silent ignore (THIS FIXES YOUR LOOP)
+      return;
     }
 
     return reply(
@@ -2457,13 +2456,17 @@ bot.on("message", async (ctx) => {
     );
   }
 
-  // 🧠 PRIVATE CHAT RULES (UNCHANGED BEHAVIOR, BUT CLEAN)
+  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // Only respond to /game in private fallback mode
-  if (!text.startsWith("/game")) return;
+  // PATCH: unified entry control (/start + /game only)
+  const allowedPrivateEntry =
+    text.startsWith("/game") ||
+    text.startsWith("/start");
+
+  if (!allowedPrivateEntry) return;
 
   return reply(
     ctx,
@@ -2478,6 +2481,75 @@ Press START to begin your journey.`,
   );
 });
 
+/* =========================================================
+FALLBACK (CLEAN + SAFE ROUTING)
+========================================================= */
+
+bot.on("message", async (ctx) => {
+  if (!ctx.from) return;
+
+  const text = ctx.message?.text || "";
+  const isPrivate = ctx.chat?.type === "private";
+
+  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
+  if (!isPrivate) {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    const mentioned =
+      ctx.message?.entities?.some(
+        (e) => e.type === "mention"
+      );
+
+    const isCommandTrigger =
+      text.startsWith("/start") ||
+      text.startsWith("/game");
+
+    if (!mentioned && !isCommandTrigger) {
+      return;
+    }
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${
+              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
+            }?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) return;
+
+  // PATCH: unified entry control (/start + /game only)
+  const allowedPrivateEntry =
+    text.startsWith("/game") ||
+    text.startsWith("/start");
+
+  if (!allowedPrivateEntry) return;
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Use /game to enter the Yodelverse properly.
+
+Press START to begin your journey.`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback("🚀 START", "start_game")]
+    ])
+  );
+});
 
 /* =========================================================
 START ENGINE
@@ -2485,11 +2557,9 @@ START ENGINE
 
 /**
  * /start is ONLY used for opening the game entry screen
- * from Telegram deep-links or manual start.
  */
 bot.start(async (ctx) => {
 
-  // 🚫 Never run gameplay inside groups
   if (ctx.chat?.type !== "private") {
 
     const botUsername =
@@ -2510,6 +2580,9 @@ bot.start(async (ctx) => {
   }
 
   const u = getUser(ctx.from.id, ctx);
+
+  // PATCH: entry intent tracking (non-breaking)
+  u._entryIntent = "start";
 
   if (checkDeath(ctx, u)) {
     return reply(
@@ -2538,11 +2611,9 @@ Press START to enter the Yodelverse.`,
 
 /**
  * MAIN ENTRY POINT
- * Users can also manually type /game
  */
 bot.command("game", async (ctx) => {
 
-  // 🚫 Never run gameplay inside groups
   if (ctx.chat?.type !== "private") {
 
     const botUsername =
@@ -2563,6 +2634,9 @@ bot.command("game", async (ctx) => {
   }
 
   const u = getUser(ctx.from.id, ctx);
+
+  // PATCH: entry intent tracking (non-breaking)
+  u._entryIntent = "game";
 
   if (checkDeath(ctx, u)) return;
 
@@ -2586,7 +2660,6 @@ Press START to enter the Yodelverse.`,
 
 /**
  * START BUTTON HANDLER
- * This is the ONLY place where gameplay actually begins.
  */
 bot.action("start_game", async (ctx) => {
 
@@ -2596,10 +2669,8 @@ bot.action("start_game", async (ctx) => {
 
   if (checkDeath(ctx, u)) return;
 
-  // only activate here
   u.registered = true;
 
-  // ensure defaults exist safely
   if (!u.character) {
     u.character = rand(CHARACTERS);
   }
@@ -2612,5 +2683,3 @@ bot.action("start_game", async (ctx) => {
 
   return home(ctx, u);
 });
-bot.launch();
-console.log("🚀 FOMO YODELVERSE ONLINE");
