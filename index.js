@@ -1157,6 +1157,7 @@ function damageBoss(dmg) {
   return WORLD.boss?.hp || 0;
 }
 
+
 /* =========================================================
 MENU
 ========================================================= */
@@ -1272,18 +1273,12 @@ async function home(
   u
 ) {
 
-  // 🔒 FIX: ENTRY GATE (prevents menu bypass at startup layer)
-  // This ensures home() is NOT a hidden second entry point.
-
+  // 🔒 PATCH: STRICT ENTRY VALIDATION (MENU SECURITY FIX)
   const session = resolveSessionFromCtx(ctx);
-
   const hasValidSession = !!session;
-
   const hasStartedGame = u.registered === true;
 
-  // If user is NOT in a valid game state, block menu access
   if (!hasValidSession && !hasStartedGame) {
-
     return reply(
       ctx,
       "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
@@ -1301,7 +1296,6 @@ async function home(
     homeMenu(u.id, ctx)
   );
 }
-
 
 /* =========================================================
 DEATH COMMANDS
