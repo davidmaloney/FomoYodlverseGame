@@ -1,5 +1,3 @@
-Claude
-
 cat > /mnt/user-data/outputs/bot.js << 'ENDOFFILE'
 /**
 * =========================================================
