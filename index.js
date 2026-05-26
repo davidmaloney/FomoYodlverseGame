@@ -1261,69 +1261,6 @@ async function home(
   );
 }
 
-/* =========================================================
-START + STARTUP FLOW (FIXED ORDER)
-========================================================= */
-
-bot.start(async (ctx) => {
-  const session = resolveSessionFromCtx(ctx);
-
-  // 🚫 GROUP SAFETY: never allow gameplay entry here
-  if (ctx.chat?.type !== "private") {
-    const botUsername =
-      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
-
-    return reply(
-      ctx,
-      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
-      Markup.inlineKeyboard([
-        [
-          Markup.button.url(
-            "🚀 START GAME",
-            `https://t.me/${botUsername}?start=hub`
-          )
-        ]
-      ])
-    );
-  }
-
-  const userId = ctx.from.id;
-  const u = getUser(userId, ctx);
-
-  // 💀 death gate (kept global safety)
-  if (checkDeath(ctx, u)) {
-    return reply(
-      ctx,
-      "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
-    );
-  }
-
-  // 🧠 HUB SESSION ENTRY (optional future expansion)
-  if (session) {
-    // session is valid context, but still does NOT auto-launch gameplay
-    // it only confirms entry route
-  }
-
-  // ❗ FIX #1: STOP AUTO GAME ENTRY
-  // Previously: u.registered → home(ctx,u)
-  // NOW: we ALWAYS show START ENTRY SCREEN first
-
-  const startButton = Markup.inlineKeyboard([
-    [
-      Markup.button.callback("🚀 START", "start_game")
-    ]
-  ]);
-
-  return reply(
-    ctx,
-    `🌌 FOMO YODELVERSE
-
-Civilization collapsed after the Great Rugpull.
-
-Press START to enter the Yodelverse.`,
-    startButton
-  );
-});
 
 /* =========================================================
 DEATH COMMANDS
@@ -2432,9 +2369,6 @@ bot.use((ctx, next) => {
   return next();
 });
 
-/* =========================================================
-FALLBACK
-========================================================= */
 
 /* =========================================================
 FALLBACK (CLEAN + SAFE ROUTING)
@@ -2464,7 +2398,8 @@ bot.on("message", async (ctx) => {
     );
   }
 
-  // ❌ ONLY allow explicit game entry
+  // ❌ FIX #3: NEVER let fallback become hidden gameplay entry
+  // Only respond to /game explicitly, everything else is ignored safely
   if (!text.startsWith("/game")) {
     return;
   }
@@ -2474,13 +2409,23 @@ bot.on("message", async (ctx) => {
 
   if (checkDeath(ctx, u)) return;
 
-  // 🎮 ENTER GAME ONLY HERE
-  return home(ctx, u);
+  // 🚫 FIX #3: DO NOT auto-enter gameplay here
+  // This must NOT route directly into home()
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Use /game to enter the Yodelverse properly.
+
+Press START to begin your journey.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("🚀 START", "start_game")
+      ]
+    ])
+  );
 });
 
-/* =========================================================
-START ENGINE
-========================================================= */
 
 /* =========================================================
 START ENGINE
