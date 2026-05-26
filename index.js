@@ -1,3 +1,4 @@
+```javascript
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
@@ -119,6 +120,7 @@ BOSS_MIN_HP: 1000,
 BOSS_MAX_HP: 2500,
 
 CHAOS_BOSS_TRIGGER: 15,
+MAX_CHAOS: 100,
 
 BROADCAST_LIMIT: 300,
 
@@ -246,6 +248,8 @@ FORCE SAVE (SAFE)
 ========================================================= */
 
 function forceSave() {
+  if (!dirty) return;
+  
   try {
     atomicWrite(DB_FILE, DB);
     atomicWrite(WORLD_FILE, WORLD);
@@ -381,6 +385,7 @@ ANTISPAM + ATOMIC SAFETY
 ========================================================= */
 
 const ACTION_SPAM = {};
+const CALLBACK_SPAM = {};
 
 function antiSpam(userId, ms = 1200) {
  const last = ACTION_SPAM[userId] || 0;
@@ -390,6 +395,17 @@ function antiSpam(userId, ms = 1200) {
  }
 
  ACTION_SPAM[userId] = now();
+ return true;
+}
+
+function antiSpamCallback(userId, ms = 800) {
+ const last = CALLBACK_SPAM[userId] || 0;
+
+ if (now() - last < ms) {
+   return false;
+ }
+
+ CALLBACK_SPAM[userId] = now();
  return true;
 }
 
@@ -421,17 +437,22 @@ Use the private game button to continue.`
 }
 
 function requireRegistered(user, ctx) {
+  // PATCH: null guard to prevent crash
+  if (!user) {
+    reply(ctx, "❌ User data not found. Please restart with /start.");
+    return false;
+  }
 
- if (user.registered) {
-   return true;
- }
+  if (user.registered) {
+    return true;
+  }
 
- reply(
-   ctx,
-   "❌ You must complete registration first."
- );
+  reply(
+    ctx,
+    "❌ You must complete registration first."
+  );
 
- return false;
+  return false;
 }
 
 function spendEnergy(
@@ -616,6 +637,19 @@ function validateSession(token) {
   }
 }
 
+function validateSessionForUser(token, userId) {
+  // PATCH: null guard for token and userId
+  if (!token || !userId) return null;
+  
+  const session = validateSession(token);
+  if (!session) return null;
+  
+  // Ensure session belongs to this user
+  if (String(session.userId) !== String(userId)) return null;
+  
+  return session;
+}
+
 function cleanupSessions() {
   let changed = false;
 
@@ -638,7 +672,7 @@ function resolveSessionFromCtx(ctx) {
 
   if (typeof payload === "string" && payload.startsWith("session_")) {
     const token = payload.slice("session_".length);
-    return validateSession(token);
+    return validateSessionForUser(token, ctx.from?.id);
   }
 
   return null;
@@ -795,18 +829,15 @@ try {
       ?.message
       ?.message_thread_id;
 
+  const options = { ...extra };
+
+  if (threadId !== undefined && threadId !== null) {
+    options.message_thread_id = threadId;
+  }
+
   return await ctx.reply(
     text,
-    {
-      ...extra,
-
-      ...(threadId
-        ? {
-            message_thread_id:
-              threadId
-          }
-        : {})
-    }
+    options
   );
 
 } catch (err) {
@@ -891,6 +922,8 @@ return {
 }
 
 function repairUser(u) {
+  // PATCH: null guard
+  if (!u) return u;
 
 if (
   !u.cooldowns ||
@@ -1019,11 +1052,11 @@ function addChaos(
 amount
 ) {
 
-WORLD.chaos += amount;
-
-if (WORLD.chaos < 1) {
-  WORLD.chaos = 1;
-}
+WORLD.chaos = clamp(
+  WORLD.chaos + amount,
+  1,
+  CONFIG.MAX_CHAOS
+);
 
 if (
   WORLD.chaos >=
@@ -1150,7 +1183,9 @@ function damageBoss(dmg) {
 
   if (WORLD.boss.hp <= 0) {
     WORLD.boss.active = false;
-    broadcast(`🎉 WORLD BOSS DEFEATED! The ${WORLD.boss.name} has fallen.`);
+    // PATCH: preserve boss name before nulling for message
+    const bossName = WORLD.boss.name;
+    broadcast(`🎉 WORLD BOSS DEFEATED! The ${bossName} has fallen.`);
     WORLD.boss = null;
   }
   save();
@@ -1312,11 +1347,13 @@ bot.command("respawn", async (ctx) => {
   const revived = rebirthPlayer(u);
 
   if (!revived) {
+    // PATCH: handle case where deathTime might be missing
+    const deathTime = u.deathTime || now();
     const waitTime =
       REBIRTH_CONFIG.rebirthCooldown -
-      (now() - u.deathTime);
+      (now() - deathTime);
 
-    const seconds = Math.ceil(waitTime / 1000);
+    const seconds = Math.max(0, Math.ceil(waitTime / 1000));
 
     return reply(
       ctx,
@@ -1368,6 +1405,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   u.character =
     ctx.match[1];
@@ -1420,6 +1458,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   u.faction = faction;
   u.registered = true;
@@ -1506,6 +1545,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   return reply(
     ctx,
@@ -1531,6 +1571,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "event")) {
     return reply(ctx, "⏳ Event cooldown active");
   }
@@ -1600,6 +1641,7 @@ bot.action(
       );
 
     if (checkDeath(ctx, u)) return;
+    if (!requireRegistered(u, ctx)) return;
 
     if (!cooldownOk(u, "mine")) {
       return reply(ctx, "⏳ Mining cooldown active");
@@ -1665,6 +1707,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "crime")) {
     return reply(ctx, "⏳ Crime cooldown active");
   }
@@ -1744,6 +1787,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "war", 8000)) {
     return reply(ctx, "⏳ War cooldown active");
   }
@@ -1798,6 +1842,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     !WORLD.boss ||
@@ -1853,6 +1898,7 @@ bot.action(
       );
 
     if (checkDeath(ctx, u)) return;
+    if (!requireRegistered(u, ctx)) return;
 
     if (!u.inventory.length) {
       return reply(
@@ -1895,6 +1941,7 @@ async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   return reply(
     ctx,
@@ -1950,6 +1997,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     u.credits < 50
@@ -1991,6 +2039,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     u.credits < 100
@@ -2032,6 +2081,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     u.credits < 250
@@ -2071,6 +2121,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     u.credits < 500
@@ -2113,6 +2164,7 @@ async (ctx) => {
     );
 
   if (checkDeath(ctx, u)) return;
+  if (!requireRegistered(u, ctx)) return;
 
   if (
     now() -
@@ -2324,7 +2376,7 @@ bot.command(
     );
   }
 
-  WORLD.chaos = amount;
+  WORLD.chaos = clamp(amount, 1, CONFIG.MAX_CHAOS);
 
   save();
 
@@ -2385,95 +2437,32 @@ GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
 bot.use((ctx, next) => {
   if (!ctx.from) return;
 
-  const allowed = antiSpam(ctx.from.id);
-
-  if (!allowed) {
-    // soft feedback so users don’t think bot is frozen
-    try {
-      if (ctx.callbackQuery) {
+  // Use separate anti-spam for callback queries vs messages
+  if (ctx.callbackQuery) {
+    const allowed = antiSpamCallback(ctx.from.id);
+    if (!allowed) {
+      try {
         ctx.answerCbQuery("⏳ Slow down a bit").catch(() => {});
-      } else {
-        ctx.reply("⏳ Slow down a bit").catch(() => {});
+      } catch (err) {
+        console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
       }
-    } catch (err) {
-      console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+      return;
     }
-    return;
+  } else {
+    const allowed = antiSpam(ctx.from.id);
+    if (!allowed) {
+      try {
+        ctx.reply("⏳ Slow down a bit").catch(() => {});
+      } catch (err) {
+        console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+      }
+      return;
+    }
   }
 
   return next();
 });
 
-
-/* =========================================================
-FALLBACK (CLEAN + SAFE ROUTING)
-========================================================= */
-
-bot.on("message", async (ctx) => {
-  if (!ctx.from) return;
-
-  const text = ctx.message?.text || "";
-  const isPrivate = ctx.chat?.type === "private";
-
-  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
-  if (!isPrivate) {
-
-    const botUsername =
-      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
-
-    const mentioned =
-      ctx.message?.entities?.some(
-        (e) => e.type === "mention"
-      );
-
-    const isCommandTrigger =
-      text.startsWith("/start") ||
-      text.startsWith("/game");
-
-    if (!mentioned && !isCommandTrigger) {
-      return;
-    }
-
-    return reply(
-      ctx,
-      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
-      Markup.inlineKeyboard([
-        [
-          Markup.button.url(
-            "🚀 START GAME",
-            `https://t.me/${
-              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
-            }?start=hub`
-          )
-        ]
-      ])
-    );
-  }
-
-  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
-  const u = getUser(ctx.from.id, ctx);
-
-  if (checkDeath(ctx, u)) return;
-
-  // PATCH: unified entry control (/start + /game only)
-  const allowedPrivateEntry =
-    text.startsWith("/game") ||
-    text.startsWith("/start");
-
-  if (!allowedPrivateEntry) return;
-
-  return reply(
-    ctx,
-    `🌌 FOMO YODELVERSE
-
-Use /game to enter the Yodelverse properly.
-
-Press START to begin your journey.`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback("🚀 START", "start_game")]
-    ])
-  );
-});
 
 /* =========================================================
 FALLBACK (CLEAN + SAFE ROUTING)
@@ -2663,7 +2652,13 @@ bot.action("start_game", async (ctx) => {
 
   if (checkDeath(ctx, u)) return;
 
+  // Only register if user has proper entry intent
+  if (!u._entryIntent) {
+    return reply(ctx, "❌ Please use /start or /game first to enter the Yodelverse.");
+  }
+
   u.registered = true;
+  u._entryIntent = null; // Clear entry intent after registration
 
   if (!u.character) {
     u.character = rand(CHARACTERS);
@@ -2677,4 +2672,8 @@ bot.action("start_game", async (ctx) => {
 
   return home(ctx, u);
 });
- 
+
+bot.launch()
+  .then(() => console.log("🌌 FOMO YODELVERSE ONLINE"))
+  .catch((err) => console.error("❌ Launch error:", err));
+```
