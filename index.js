@@ -1201,8 +1201,8 @@ function homeMenu(
   ctx
 ) {
 
-  // ✅ CHANGE 1: Removed "🚀 ENTER GAME" button from in-game menu.
-  // The only entry point is now the group /game button → deep link.
+  // Entry flow is handled via /game + deep link.
+  // Home menu should always show gameplay + rebirth access when relevant.
   const rows = [
 
     [
@@ -1263,6 +1263,14 @@ function homeMenu(
         "🎁 DAILY",
         "daily"
       )
+    ],
+
+    // NEW: Rebirth access always visible (but logic still gated server-side)
+    [
+      Markup.button.callback(
+        "♻️ REBIRTH",
+        "rebirth"
+      )
     ]
   ];
 
@@ -1297,8 +1305,8 @@ async function home(
   u
 ) {
 
-  // ✅ CHANGE 2: Session check relaxed — registered users always get home screen.
-  // Deep-link session OR already registered = valid access.
+  // Entry is already handled by deep link / session system.
+  // This ensures the "box" (home menu) appears immediately on valid entry.
   const session = resolveSessionFromCtx(ctx);
   const hasValidSession = !!session;
   const hasStartedGame = u.registered === true;
@@ -1310,7 +1318,7 @@ async function home(
     );
   }
 
-  // Enforce death check before showing home
+  // Death gate
   if (checkDeath(ctx, u)) {
     return reply(ctx, "💀 You are dead. Use /respawn to continue.");
   }
@@ -1321,7 +1329,6 @@ async function home(
     homeMenu(u.id, ctx)
   );
 }
-
 /* =========================================================
 DEATH COMMANDS
 ========================================================= */
