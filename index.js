@@ -1456,6 +1456,9 @@ async (ctx) => {
   if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
+  // 🛡️ SAFETY FIX: prevent faction assignment after corruption/dead edge states
+  if (!u || u.dead) return;
+
   u.faction = faction;
   u.registered = true;
 
