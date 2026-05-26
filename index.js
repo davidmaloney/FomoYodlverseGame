@@ -482,37 +482,36 @@ function transaction(callback) {
 DEATH SYSTEM (AUTHORITATIVE)
 ========================================================= */
 
-function killPlayer(ctx, user) {
-  if (!user) return;
-  if (user.dead === true) return;
+async function home(ctx, u) {
+  const session = resolveSessionFromCtx(ctx);
+  const hasValidSession = !!session;
+  const hasStartedGame = u?.registered === true;
 
-  user.hp = 0;
-  user.dead = true;
-  user.deathTime = now();
+  const canEnter =
+    hasValidSession ||
+    hasStartedGame ||
+    ctx.startPayload?.startsWith("session_");
 
-  // 💀 XP LOSS (50%)
-  user.xp = Math.max(0, Math.floor(user.xp * 0.5));
-
-  // 🎒 INVENTORY LOSS (50% random removal)
-  if (Array.isArray(user.inventory) && user.inventory.length > 0) {
-    const lossCount = Math.floor(user.inventory.length * 0.5);
-
-    for (let i = 0; i < lossCount; i++) {
-      const idx = Math.floor(Math.random() * user.inventory.length);
-      user.inventory.splice(idx, 1);
-    }
+  if (!u) {
+    return reply(ctx, "❌ User not found. Please restart with /start.");
   }
 
-  save();
+  if (checkDeath(ctx, u)) {
+    return reply(ctx, "💀 You are dead. Use /respawn to continue.");
+  }
 
-  reply(
+  // FIX: never block UI completely — always allow session or registered access
+  if (!canEnter) {
+    return reply(
+      ctx,
+      "🚫 Session not active.\n\nUse /start or /game to enter the Yodelverse."
+    );
+  }
+
+  return reply(
     ctx,
-`💀 YOU HAVE BEEN ELIMINATED
-
-☠ XP reduced by 50%
-🎒 50% of your inventory was lost
-
-Use /respawn to return to the Yodelverse.`
+    homeText(u),
+    homeMenu(u.id, ctx)
   );
 }
 /* =========================================================
