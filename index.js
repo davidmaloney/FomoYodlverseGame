@@ -1,3 +1,4 @@
+```javascript
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
@@ -25,10 +26,6 @@
 * - Write queue
 * - State normalization
 * - Unified entry gate
-* - Session enforcement
-* - Per-action anti-spam
-* - Energy system integration
-* - Complete game loop
 *
 * =========================================================
 */
@@ -50,22 +47,30 @@ process.exit(1);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
-
 /* =========================================================
 🚪 UNIFIED ENTRY GATE (ALL PATHS CONSOLIDATED)
 ========================================================= */
 
+/**
+ * Single source of truth for ALL entry paths.
+ * No half-states — a user is either fully admitted or fully rejected.
+ */
 function resolveEntryIntent(ctx) {
   const text = ctx.message?.text || "";
   const payload = ctx.startPayload || "";
   const callbackData = ctx.callbackQuery?.data || "";
 
+  // Command-based entry
   if (text === "/start") return "start";
   if (text === "/game") return "game";
 
+  // Deep-link session entry
   if (typeof payload === "string" && payload.startsWith("session_")) return "session";
+
+  // Hub deep link (from groups)
   if (typeof payload === "string" && payload === "hub") return "hub";
 
+  // Start button from inline keyboard
   if (callbackData === "start_game") return "button";
 
   return null;
@@ -91,6 +96,10 @@ function blockInvalidGameAccess(ctx) {
   return false;
 }
 
+/**
+ * Apply entry intent to user. Called exactly once during admission.
+ * After this, _entryIntent is cleared and the user is fully inside the game.
+ */
 function applyEntryIntent(user, intent) {
   if (!user) return;
   user._entryIntent = intent;
@@ -101,24 +110,6 @@ function consumeEntryIntent(user) {
   const intent = user._entryIntent;
   user._entryIntent = null;
   return intent;
-}
-
-/**
- * SINGLE AUTHORITATIVE GATE — all gameplay entry points pass through here.
- * A user is either fully admitted (registered + session-valid OR registered + recent intent)
- * or fully blocked.
- */
-function isUserAuthorizedForGameplay(user, ctx) {
-  if (!user) return false;
-  if (!user.registered) return false;
-  if (user.dead) return false;
-
-  const session = resolveSessionFromCtx(ctx);
-  if (session) return true;
-
-  if (user._entryIntent) return true;
-
-  return false;
 }
 
 /* =========================================================
@@ -168,6 +159,7 @@ ENERGY_COSTS: {
  boss: 6
 },
 
+// BALANCE PATCH: Slightly widened reward ranges for viability diversity
 BALANCE: {
   MINE_BASE_MIN: 12,
   MINE_BASE_MAX: 38,
@@ -197,14 +189,14 @@ const WORLD_FILE = "./world.json";
 const SESSION_FILE = "./sessions.json";
 
 /* =========================================================
-WRITE QUEUE — SINGLE AUTHORITATIVE PERSISTENCE PATH
+WRITE QUEUE (SERIALIZED SAFE PERSISTENCE)
 ========================================================= */
 
 let writeQueue = [];
 let writeTimer = null;
-let persistLock = false;
 
 function enqueueWrite(file, data) {
+  // Replace any pending write for the same file
   writeQueue = writeQueue.filter(w => w.file !== file);
   writeQueue.push({ file, data });
   
@@ -217,9 +209,6 @@ function flushWriteQueue() {
   clearTimeout(writeTimer);
   writeTimer = null;
 
-  if (persistLock) return;
-  persistLock = true;
-
   const writes = writeQueue.splice(0);
   
   for (const { file, data } of writes) {
@@ -229,8 +218,6 @@ function flushWriteQueue() {
       console.log("❌ QUEUED WRITE FAILED:", file, err.message);
     }
   }
-
-  persistLock = false;
 }
 
 function queueSaveAll() {
@@ -239,41 +226,14 @@ function queueSaveAll() {
   enqueueWrite(SESSION_FILE, SESSIONS);
 }
 
-function authoritativeFlush() {
+// Flush on exit
+function emergencyFlush() {
   if (writeTimer) {
     clearTimeout(writeTimer);
     writeTimer = null;
   }
-  if (persistLock) return;
-  persistLock = true;
-
-  const writes = writeQueue.splice(0);
-  
-  if (dirty) {
-    writes.push({ file: DB_FILE, data: DB });
-    writes.push({ file: WORLD_FILE, data: WORLD });
-    writes.push({ file: SESSION_FILE, data: SESSIONS });
-    dirty = false;
-  }
-
-  const unique = [];
-  const seen = new Set();
-  for (let i = writes.length - 1; i >= 0; i--) {
-    if (!seen.has(writes[i].file)) {
-      seen.add(writes[i].file);
-      unique.unshift(writes[i]);
-    }
-  }
-
-  for (const { file, data } of unique) {
-    try {
-      atomicWrite(file, data);
-    } catch (err) {
-      console.log("❌ FLUSH WRITE FAILED:", file, err.message);
-    }
-  }
-
-  persistLock = false;
+  flushWriteQueue();
+  forceSave();
 }
 
 /* =========================================================
@@ -323,7 +283,7 @@ let WORLD = load(WORLD_FILE, {
 let SESSIONS = load(SESSION_FILE, {});
 
 /* =========================================================
-STATE NORMALIZATION (REPAIR TOOL ONLY — NOT RUNTIME MUTATOR)
+STATE NORMALIZATION (CONSISTENCY REPAIR PASS)
 ========================================================= */
 
 function normalizeWorld() {
@@ -342,6 +302,7 @@ function normalizeWorld() {
     WORLD.marketState = "stable";
   }
 
+  // Boss recovery: ensure no stuck active boss with 0 HP
   if (WORLD.boss) {
     if (WORLD.boss.active && WORLD.boss.hp <= 0) {
       WORLD.boss.active = false;
@@ -388,15 +349,20 @@ function normalizeAllState() {
   }
 }
 
+// Run normalization on startup
 normalizeAllState();
 
 /* =========================================================
-SAVE FLAG
+SAVE FLAG + QUEUED SAVE
 ========================================================= */
 
 let dirty = false;
 
 function save() {
+  dirty = true;
+}
+
+function markDirty() {
   dirty = true;
 }
 
@@ -438,11 +404,19 @@ function atomicWrite(file, data) {
 }
 
 /* =========================================================
-FORCE SAVE — SINGLE AUTHORITATIVE PATH
+FORCE SAVE (COMBINED: QUEUE FLUSH + DIRECT WRITE)
 ========================================================= */
 
 function forceSave() {
-  authoritativeFlush();
+  if (!dirty && writeQueue.length === 0) return;
+  
+  try {
+    emergencyFlush();
+    dirty = false;
+    console.log("💾 Saved safely");
+  } catch (err) {
+    console.log("❌ SAVE ERROR:", err.message);
+  }
 }
 
 /* =========================================================
@@ -461,7 +435,7 @@ SAFETY
 process.on("uncaughtException", (err) => {
   console.log("❌ UNCAUGHT ERROR");
   console.log(err);
-  authoritativeFlush();
+  emergencyFlush();
 });
 
 process.on("unhandledRejection", (err) => {
@@ -505,15 +479,15 @@ function safeNumber(n, fallback = 0) {
 }
 
 /* =========================================================
-DEATH HELPERS — CONSISTENT GATING
+DEATH HELPERS
 ========================================================= */
 
 function isDead(user) {
   return !!user?.dead;
 }
 
-function checkDeath(user) {
-  if (!user) return true;
+function checkDeath(ctx, user) {
+  if (!user) return false;
   if (!user.dead) return false;
 
   if (user.hp > 0) {
@@ -524,32 +498,32 @@ function checkDeath(user) {
 }
 
 /* =========================================================
-ANTISPAM — PER-ACTION ISOLATION
+ANTISPAM + ATOMIC SAFETY
 ========================================================= */
 
 const ACTION_SPAM = {};
+const CALLBACK_SPAM = {};
 
-function antiSpamAction(userId, actionKey, ms = 1200) {
-  if (!ACTION_SPAM[userId]) {
-    ACTION_SPAM[userId] = {};
-  }
+function antiSpam(userId, ms = 1200) {
+ const last = ACTION_SPAM[userId] || 0;
 
-  const last = ACTION_SPAM[userId][actionKey] || 0;
+ if (now() - last < ms) {
+   return false;
+ }
 
-  if (now() - last < ms) {
-    return false;
-  }
-
-  ACTION_SPAM[userId][actionKey] = now();
-  return true;
+ ACTION_SPAM[userId] = now();
+ return true;
 }
 
-function antiSpamCallback(userId, actionKey, ms = 800) {
-  return antiSpamAction(userId, "cb_" + actionKey, ms);
-}
+function antiSpamCallback(userId, ms = 800) {
+ const last = CALLBACK_SPAM[userId] || 0;
 
-function antiSpamMessage(userId, ms = 1200) {
-  return antiSpamAction(userId, "msg", ms);
+ if (now() - last < ms) {
+   return false;
+ }
+
+ CALLBACK_SPAM[userId] = now();
+ return true;
 }
 
 /* =========================================================
@@ -585,25 +559,6 @@ function requireRegistered(user, ctx) {
 
   reply(ctx, "❌ You must complete registration first.");
   return false;
-}
-
-function requireGameplayAccess(user, ctx) {
-  if (!user) {
-    reply(ctx, "❌ User data not found. Please restart with /start.");
-    return false;
-  }
-
-  if (checkDeath(user)) {
-    reply(ctx, "💀 You are dead. Use /respawn to continue.");
-    return false;
-  }
-
-  if (!isUserAuthorizedForGameplay(user, ctx)) {
-    reply(ctx, "🚫 Session invalid. Please use /start or /game to begin.");
-    return false;
-  }
-
-  return true;
 }
 
 function spendEnergy(user, amount) {
@@ -708,19 +663,6 @@ function rebirthPlayer(user) {
 
   return user;
 }
-
-/* =========================================================
-ENERGY REGENERATION SYSTEM
-========================================================= */
-
-setInterval(() => {
-  for (const id in DB) {
-    const u = DB[id];
-    if (!u || u.dead) continue;
-    restoreEnergy(u);
-  }
-  save();
-}, 60000);
 
 /* =========================================================
 SESSION SYSTEM
@@ -1042,7 +984,7 @@ function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
 }
 
 /* =========================================================
-WORLD ENGINE
+WORLD ENGINE (WITH STUCK-STATE RECOVERY)
 ========================================================= */
 
 function addChaos(amount) {
@@ -1087,14 +1029,15 @@ async function broadcast(message) {
 }
 
 /* =========================================================
-BOSS SYSTEM — SINGLE AUTHORITATIVE STATE SOURCE
+BOSS SYSTEM (GUARANTEED RECOVERY)
 ========================================================= */
 
 let bossLock = false;
 let bossLockTime = 0;
-const BOSS_LOCK_TIMEOUT = 30000;
+const BOSS_LOCK_TIMEOUT = 30000; // Auto-unlock after 30s
 
 function spawnBoss() {
+ // Recovery: force unlock if stuck
  if (bossLock && (now() - bossLockTime) > BOSS_LOCK_TIMEOUT) {
    bossLock = false;
  }
@@ -1136,10 +1079,10 @@ function damageBoss(dmg) {
   WORLD.boss.hp = Math.max(0, WORLD.boss.hp - dmg);
 
   if (WORLD.boss.hp <= 0) {
+    WORLD.boss.active = false;
     const bossName = WORLD.boss.name;
     broadcast(`🎉 WORLD BOSS DEFEATED! The ${bossName} has fallen.`);
     WORLD.boss = null;
-    bossLock = false;
   }
   save();
   return WORLD.boss?.hp || 0;
@@ -1208,11 +1151,19 @@ function homeText(u) {
 }
 
 async function home(ctx, u) {
-  if (!isUserAuthorizedForGameplay(u, ctx)) {
+  const session = resolveSessionFromCtx(ctx);
+  const hasValidSession = !!session;
+  const hasStartedGame = u.registered === true;
+
+  if (!hasValidSession && !hasStartedGame) {
     return reply(
       ctx,
       "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
     );
+  }
+
+  if (checkDeath(ctx, u)) {
+    return reply(ctx, "💀 You are dead. Use /respawn to continue.");
   }
 
   return reply(ctx, homeText(u), homeMenu(u.id, ctx));
@@ -1265,31 +1216,6 @@ bot.command("status", (ctx) => {
  );
 });
 
-bot.command("help", (ctx) => {
-  return reply(
-    ctx,
-`🌌 FOMO YODELVERSE HELP
-
-/start - Enter the Yodelverse
-/game - Start game session
-/menu - Open game menu
-/profile - View your profile
-/leaderboard - View rankings
-/respawn - Return from death
-/status - Server status
-/help - This help menu
-
-Game Actions:
-⚡ Event - Participate in world events
-⛏ Mine - Extract resources
-🕶 Crime - Black market operations
-⚔ War - Faction warfare
-🐋 Boss - Raid world bosses
-🏪 Market - Buy upgrades
-🎁 Daily - Claim daily rewards`
-  );
-});
-
 /* =========================================================
 CHARACTER FLOW
 ========================================================= */
@@ -1299,7 +1225,7 @@ bot.action(/char_(.+)/, async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   u.character = ctx.match[1];
@@ -1332,7 +1258,7 @@ bot.action(/faction_(.+)/, async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   u.faction = faction;
@@ -1395,7 +1321,7 @@ bot.action("profile", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   return reply(ctx, profileText(u));
@@ -1410,13 +1336,8 @@ bot.action("event", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-  
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.event)) {
-    return reply(ctx, "⚡ Not enough energy! Wait for it to regenerate.");
-  }
-  
   if (!cooldownOk(u, "event")) {
     return reply(ctx, "⏳ Event cooldown active");
   }
@@ -1431,10 +1352,7 @@ bot.action("event", async (ctx) => {
     addChaos(1);
     save();
 
-    if (checkDeath(u)) {
-      killPlayer(ctx, u);
-      return;
-    }
+    if (checkDeath(ctx, u)) return;
 
     return reply(
       ctx,
@@ -1479,12 +1397,8 @@ bot.action("mine", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.mine)) {
-    return reply(ctx, "⚡ Not enough energy! Wait for it to regenerate.");
-  }
 
   if (!cooldownOk(u, "mine")) {
     return reply(ctx, "⏳ Mining cooldown active");
@@ -1532,13 +1446,8 @@ bot.action("crime", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.crime)) {
-    return reply(ctx, "⚡ Not enough energy! Wait for it to regenerate.");
-  }
-
   if (!cooldownOk(u, "crime")) {
     return reply(ctx, "⏳ Crime cooldown active");
   }
@@ -1556,10 +1465,7 @@ bot.action("crime", async (ctx) => {
 
     save();
 
-    if (checkDeath(u)) {
-      killPlayer(ctx, u);
-      return;
-    }
+    if (checkDeath(ctx, u)) return;
 
     return reply(
       ctx,
@@ -1603,13 +1509,8 @@ bot.action("war", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.war)) {
-    return reply(ctx, "⚡ Not enough energy! Wait for it to regenerate.");
-  }
-
   if (!cooldownOk(u, "war", 8000)) {
     return reply(ctx, "⏳ War cooldown active");
   }
@@ -1628,10 +1529,7 @@ bot.action("war", async (ctx) => {
 
   save();
 
-  if (checkDeath(u)) {
-    killPlayer(ctx, u);
-    return;
-  }
+  if (checkDeath(ctx, u)) return;
 
   return reply(
     ctx,
@@ -1654,12 +1552,8 @@ bot.action("boss", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.boss)) {
-    return reply(ctx, "⚡ Not enough energy! Wait for it to regenerate.");
-  }
 
   if (!WORLD.boss || !WORLD.boss.active) {
     spawnBoss();
@@ -1678,10 +1572,7 @@ bot.action("boss", async (ctx) => {
 
   save();
 
-  if (checkDeath(u)) {
-    killPlayer(ctx, u);
-    return;
-  }
+  if (checkDeath(ctx, u)) return;
 
   const hp = WORLD.boss?.hp || 0;
 
@@ -1704,7 +1595,7 @@ bot.action("inventory", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (!u.inventory.length) {
@@ -1737,22 +1628,22 @@ bot.action("market", async (ctx) => {
   await ack(ctx);
 
   const u = getUser(ctx.from.id, ctx);
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   return reply(
     ctx,
 `🏪 BLACK MARKET
 
-⚡ Energy Cell — 50 Credits
-🛡 Nano Armor — 100 Credits
-⛏ Quantum Drill — 250 Credits
-🏠 Luxury Apartment — 500 Credits`,
+⚡ Energy Cell — 50
+🛡 Nano Armor — 100
+⛏ Quantum Drill — 250
+🏠 Luxury Apartment — 500`,
     Markup.inlineKeyboard([
-      [Markup.button.callback("⚡ Buy Energy (50)", "buy_energy")],
-      [Markup.button.callback("🛡 Buy Armor (100)", "buy_armor")],
-      [Markup.button.callback("⛏ Buy Drill (250)", "buy_drill")],
-      [Markup.button.callback("🏠 Buy Apartment (500)", "buy_home")]
+      [Markup.button.callback("⚡ Buy Energy", "buy_energy")],
+      [Markup.button.callback("🛡 Buy Armor", "buy_armor")],
+      [Markup.button.callback("⛏ Buy Drill", "buy_drill")],
+      [Markup.button.callback("🏠 Buy Apartment", "buy_home")]
     ])
   );
 });
@@ -1762,7 +1653,7 @@ bot.action("buy_energy", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (u.credits < 50) {
@@ -1774,7 +1665,7 @@ bot.action("buy_energy", async (ctx) => {
 
   save();
 
-  return reply(ctx, "⚡ Energy restored +25");
+  return reply(ctx, "⚡ Energy restored");
 });
 
 bot.action("buy_armor", async (ctx) => {
@@ -1782,7 +1673,7 @@ bot.action("buy_armor", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (u.credits < 100) {
@@ -1794,7 +1685,7 @@ bot.action("buy_armor", async (ctx) => {
 
   save();
 
-  return reply(ctx, "🛡 Armor equipped +25 HP");
+  return reply(ctx, "🛡 Armor equipped");
 });
 
 bot.action("buy_drill", async (ctx) => {
@@ -1802,7 +1693,7 @@ bot.action("buy_drill", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (u.credits < 250) {
@@ -1822,7 +1713,7 @@ bot.action("buy_home", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (u.credits < 500) {
@@ -1834,7 +1725,7 @@ bot.action("buy_home", async (ctx) => {
 
   save();
 
-  return reply(ctx, "🏠 Apartment upgraded to Luxury Sky Apartment");
+  return reply(ctx, "🏠 Apartment upgraded");
 });
 
 /* =========================================================
@@ -1846,14 +1737,11 @@ bot.action("daily", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
   if (now() - u.lastDaily < CONFIG.DAILY_COOLDOWN) {
-    const remaining = CONFIG.DAILY_COOLDOWN - (now() - u.lastDaily);
-    const hours = Math.floor(remaining / 3600000);
-    const minutes = Math.floor((remaining % 3600000) / 60000);
-    return reply(ctx, `⏳ Daily reward available in ${hours}h ${minutes}m`);
+    return reply(ctx, "⏳ Daily already claimed");
   }
 
   u.lastDaily = now();
@@ -1884,17 +1772,16 @@ function leaderboardText() {
   let msg = "🏆 LEADERBOARD\n\n";
 
   top.forEach((u, i) => {
-    msg += `${i + 1}. ${u.name} — ${u.xp} XP (Lvl ${level(u.xp)})\n`;
+    msg += `${i + 1}. ${u.name}\n${u.xp} XP\n\n`;
   });
 
-  msg += "\n⚔ FACTION POWER\n\n";
+  msg += "⚔ FACTION POWER\n\n";
 
   for (const f in WORLD.factions) {
     msg += `${f}: ${WORLD.factions[f]}\n`;
   }
 
   msg += `\n🔥 Chaos: ${WORLD.chaos}`;
-  msg += `\n🌍 Market: ${WORLD.marketState}`;
 
   return msg;
 }
@@ -1915,7 +1802,7 @@ MENU
 bot.command("menu", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
 
-  if (!requireGameplayAccess(u, ctx)) return;
+  if (checkDeath(ctx, u)) return;
   return home(ctx, u);
 });
 
@@ -1977,24 +1864,6 @@ bot.command("normalize", (ctx) => {
   return reply(ctx, "✅ State normalized");
 });
 
-bot.command("setcredits", (ctx) => {
-  if (!isAdmin(ctx.from.id)) return;
-  
-  const parts = ctx.message.text.split(" ");
-  const targetId = parts[1];
-  const amount = parseInt(parts[2]);
-  
-  if (!targetId || isNaN(amount)) {
-    return reply(ctx, "Usage: /setcredits user_id amount");
-  }
-  
-  const u = getUser(targetId);
-  u.credits = amount;
-  save();
-  
-  return reply(ctx, `✅ Set ${u.name}'s credits to ${amount}`);
-});
-
 /* =========================================================
 RANDOM EVENTS
 ========================================================= */
@@ -2021,21 +1890,30 @@ MARKET SHIFTS
 
 setInterval(() => {
   WORLD.marketState = rand(["stable", "bullish", "volatile", "crashing"]);
+  normalizeWorld();
   save();
 }, 300000);
 
 /* =========================================================
-GLOBAL MIDDLEWARE (PER-ACTION ANTISPAM)
+PERIODIC STATE NORMALIZATION
+========================================================= */
+
+setInterval(() => {
+  normalizeAllState();
+  if (dirty) {
+    queueSaveAll();
+  }
+}, 600000);
+
+/* =========================================================
+GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
 ========================================================= */
 
 bot.use((ctx, next) => {
   if (!ctx.from) return;
 
-  const userId = ctx.from.id;
-
   if (ctx.callbackQuery) {
-    const actionKey = ctx.callbackQuery.data || "unknown";
-    const allowed = antiSpamCallback(userId, actionKey);
+    const allowed = antiSpamCallback(ctx.from.id);
     if (!allowed) {
       try {
         ctx.answerCbQuery("⏳ Slow down a bit").catch(() => {});
@@ -2045,7 +1923,7 @@ bot.use((ctx, next) => {
       return;
     }
   } else {
-    const allowed = antiSpamMessage(userId);
+    const allowed = antiSpam(ctx.from.id);
     if (!allowed) {
       try {
         ctx.reply("⏳ Slow down a bit").catch(() => {});
@@ -2060,7 +1938,7 @@ bot.use((ctx, next) => {
 });
 
 /* =========================================================
-FALLBACK — ONLY WHEN NO COMMAND CONSUMED
+FALLBACK (CLEAN + SAFE ROUTING)
 ========================================================= */
 
 bot.on("message", async (ctx) => {
@@ -2068,8 +1946,6 @@ bot.on("message", async (ctx) => {
 
   const text = ctx.message?.text || "";
   const isPrivate = ctx.chat?.type === "private";
-
-  if (text.startsWith("/")) return;
 
   if (!isPrivate) {
     const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
@@ -2102,7 +1978,13 @@ bot.on("message", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (checkDeath(u)) return;
+  if (checkDeath(ctx, u)) return;
+
+  const allowedPrivateEntry =
+    text.startsWith("/game") ||
+    text.startsWith("/start");
+
+  if (!allowedPrivateEntry) return;
 
   return reply(
     ctx,
@@ -2142,13 +2024,14 @@ bot.start(async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   const intent = resolveEntryIntent(ctx);
 
+  // Unified admission: only allow valid entry intents
   if (!intent) {
     return reply(ctx, "❌ Invalid entry. Please use /start or /game.");
   }
 
   applyEntryIntent(u, intent);
 
-  if (checkDeath(u)) {
+  if (checkDeath(ctx, u)) {
     return reply(
       ctx,
       "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
@@ -2195,7 +2078,7 @@ bot.command("game", async (ctx) => {
 
   applyEntryIntent(u, intent);
 
-  if (checkDeath(u)) return;
+  if (checkDeath(ctx, u)) return;
 
   return reply(
     ctx,
@@ -2215,9 +2098,7 @@ bot.action("start_game", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  if (checkDeath(u)) {
-    return reply(ctx, "💀 You are dead. Use /respawn to continue.");
-  }
+  if (checkDeath(ctx, u)) return;
 
   const intent = consumeEntryIntent(u);
 
