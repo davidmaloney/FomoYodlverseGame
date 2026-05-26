@@ -2487,21 +2487,84 @@ START ENGINE
 ========================================================= */
 
 /**
- * /start is now DISABLED for gameplay.
- * It only tells users to use /game.
+ * /start is ONLY used for opening the game entry screen
+ * from Telegram deep-links or manual start.
  */
 bot.start(async (ctx) => {
+
+  // 🚫 Never run gameplay inside groups
+  if (ctx.chat?.type !== "private") {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${botUsername}?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) {
+    return reply(
+      ctx,
+      "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
+    );
+  }
+
   return reply(
     ctx,
-    "🚀 /start is not used in this game anymore.\n\nType /game to enter the Yodelverse."
+    `🌌 FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+
+Press START to enter the Yodelverse.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "🚀 START",
+          "start_game"
+        )
+      ]
+    ])
   );
 });
 
 /**
  * MAIN ENTRY POINT
- * This is now the ONLY way into the game flow.
+ * Users can also manually type /game
  */
 bot.command("game", async (ctx) => {
+
+  // 🚫 Never run gameplay inside groups
+  if (ctx.chat?.type !== "private") {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${botUsername}?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
@@ -2515,7 +2578,10 @@ Civilization collapsed after the Great Rugpull.
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
       [
-        Markup.button.callback("🚀 START", "start_game")
+        Markup.button.callback(
+          "🚀 START",
+          "start_game"
+        )
       ]
     ])
   );
@@ -2523,22 +2589,29 @@ Press START to enter the Yodelverse.`,
 
 /**
  * START BUTTON HANDLER
- * This fixes: "user doesn't exist" / broken START button
+ * This is the ONLY place where gameplay actually begins.
  */
 bot.action("start_game", async (ctx) => {
+
   await ack(ctx);
 
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // mark user as active in the system
+  // only activate here
   u.registered = true;
+
+  // ensure defaults exist safely
+  if (!u.character) {
+    u.character = rand(CHARACTERS);
+  }
+
+  if (!u.faction) {
+    u.faction = rand(FACTIONS);
+  }
+
   save();
 
-  return reply(
-    ctx,
-    `🚀 Welcome to the Yodelverse.`,
-    homeMenu(u.id, ctx)
-  );
+  return home(ctx, u);
 });
