@@ -413,36 +413,32 @@ SECURITY + ROUTING HELPERS
 ========================================================= */
 
 function isPrivateChat(ctx) {
-
- return ctx.chat &&
-   ctx.chat.type === "private";
+  return ctx.chat && ctx.chat.type === "private";
 }
 
 function requirePrivate(ctx) {
-
- if (!isPrivateChat(ctx)) {
-
-   reply(
-     ctx,
-`🚫 Gameplay is only available in private chat.
+  if (!isPrivateChat(ctx)) {
+    reply(
+      ctx,
+      `🚫 Gameplay is only available in private chat.
 
 Use the private game button to continue.`
-   );
-
-   return false;
- }
-
- return true;
+    );
+    return false;
+  }
+  return true;
 }
 
 function requireRegistered(user, ctx) {
-  // PATCH: null guard to prevent crash
   if (!user) {
     reply(ctx, "❌ User data not found. Please restart with /start.");
     return false;
   }
 
-  if (user.registered) {
+  // FIX: allow session-based entry OR registered users
+  const session = resolveSessionFromCtx(ctx);
+
+  if (user.registered || session) {
     return true;
   }
 
@@ -454,48 +450,32 @@ function requireRegistered(user, ctx) {
   return false;
 }
 
-function spendEnergy(
- user,
- amount
-) {
+function spendEnergy(user, amount) {
+  if (user.energy < amount) {
+    return false;
+  }
 
- if (user.energy < amount) {
-   return false;
- }
-
- user.energy -= amount;
-
- return true;
+  user.energy -= amount;
+  return true;
 }
 
 function restoreEnergy(user) {
-
- user.energy = clamp(
-   user.energy + 1,
-   0,
-   CONFIG.MAX_ENERGY
- );
+  user.energy = clamp(
+    user.energy + 1,
+    0,
+    CONFIG.MAX_ENERGY
+  );
 }
 
 function transaction(callback) {
-
- try {
-
-   callback();
-
-   save();
-
-   return true;
-
- } catch (err) {
-
-   console.log(
-     "❌ TRANSACTION ERROR:",
-     err.message
-   );
-
-   return false;
- }
+  try {
+    callback();
+    save();
+    return true;
+  } catch (err) {
+    console.log("❌ TRANSACTION ERROR:", err.message);
+    return false;
+  }
 }
 
 /* =========================================================
