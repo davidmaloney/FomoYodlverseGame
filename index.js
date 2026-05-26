@@ -1,3 +1,43 @@
+Skip to content
+davidmaloney
+FomoYodlverseGame
+Repository navigation
+Code
+Issues
+Pull requests
+Agents
+Actions
+Projects
+Wiki
+Security and quality
+2
+ (2)
+Insights
+Settings
+Files
+Go to file
+t
+T
+data
+.env
+index.js
+package.json
+FomoYodlverseGame
+/index.js
+davidmaloney
+davidmaloney
+Update index.js
+9a79e9a
+ · 
+33 minutes ago
+FomoYodlverseGame
+/index.js
+
+Code
+
+Blame
+2679 lines (2027 loc) · 42.3 KB
+function killPlayer(ctx, user) {
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
@@ -43,7 +83,48 @@ process.exit(1);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
+/* =========================================================
+🚪 STRICT ENTRY GATE PATCH (CRITICAL FIX)
+========================================================= */
 
+function isValidGameEntry(ctx) {
+  const text = ctx.message?.text || "";
+  const payload = ctx.startPayload || "";
+
+  // Only allow explicit entry paths
+  const isStartCommand = text === "/start";
+  const isGameCommand = text === "/game";
+  const isDeepLinkSession = typeof payload === "string" && payload.startsWith("session_");
+  const isStartGameButton = ctx.callbackQuery?.data === "start_game";
+
+  return isStartCommand || isGameCommand || isDeepLinkSession || isStartGameButton;
+}
+
+/**
+ * HARD BLOCK invalid entry into gameplay system
+ * Prevents accidental routing from bot.on("message")
+ */
+function blockInvalidGameAccess(ctx) {
+  if (!ctx.from) return true;
+
+  const text = ctx.message?.text || "";
+
+  // allow only system entry points
+  if (!isValidGameEntry(ctx)) {
+
+    // silently ignore junk messages OR show minimal UX hint
+    if (ctx.chat?.type === "private") {
+      reply(
+        ctx,
+        "🌌 Yodelverse is idle.\n\nUse /start or press START to enter."
+      );
+    }
+
+    return true;
+  }
+
+  return false;
+}
 /* =========================================================
 CONFIG
 ========================================================= */
@@ -99,92 +180,133 @@ const DB_FILE = "./data.json";
 const WORLD_FILE = "./world.json";
 const SESSION_FILE = "./sessions.json";
 
+/* =========================================================
+LOAD (SAFE)
+========================================================= */
+
 function load(path, fallback) {
+  try {
+    if (!fs.existsSync(path)) return fallback;
 
-try {
+    const raw = fs.readFileSync(path, "utf8");
 
-  if (!fs.existsSync(path)) {
+    if (!raw || !raw.trim()) return fallback;
+
+    const parsed = JSON.parse(raw);
+
+    // extra safety: prevent corrupt object types
+    if (typeof parsed !== "object" || parsed === null) {
+      return fallback;
+    }
+
+    return parsed;
+
+  } catch (err) {
+    console.log("❌ LOAD ERROR:", path, err.message);
     return fallback;
   }
-
-  const raw =
-    fs.readFileSync(path, "utf8");
-
-  if (!raw || !raw.trim()) {
-    return fallback;
-  }
-
-  return JSON.parse(raw);
-
-} catch (err) {
-
-  console.log(
-    "❌ LOAD ERROR:",
-    err.message
-  );
-
-  return fallback;
 }
-}
+
+/* =========================================================
+IN-MEMORY STATE
+========================================================= */
 
 let DB = load(DB_FILE, {});
-
 let WORLD = load(WORLD_FILE, {
-season: 1,
-chaos: 1,
-marketState: "stable",
-
-boss: null,
-
-factions: {
-  HODL: 0,
-  FOMO: 0,
-  SCAM: 0,
-  WHALE: 0
-}
+  season: 1,
+  chaos: 1,
+  marketState: "stable",
+  boss: null,
+  factions: {
+    HODL: 0,
+    FOMO: 0,
+    SCAM: 0,
+    WHALE: 0
+  }
 });
 
-let SESSIONS =
-load(SESSION_FILE, {});
-
+let SESSIONS = load(SESSION_FILE, {});
 let dirty = false;
 
+/* =========================================================
+SAVE FLAG
+========================================================= */
+
 function save() {
-dirty = true;
+  dirty = true;
 }
+
+/* =========================================================
+ATOMIC WRITE (HARDENED)
+========================================================= */
 
 function atomicWrite(file, data) {
- const temp = `${file}.tmp`;
+  const temp = `${file}.tmp`;
+  const backup = `${file}.bak`;
 
- fs.writeFileSync(
-   temp,
-   JSON.stringify(data, null, 2)
- );
+  try {
+    // 1. Backup current file before overwrite
+    if (fs.existsSync(file)) {
+      fs.copyFileSync(file, backup);
+    }
 
- fs.renameSync(temp, file);
+    // 2. Write temp file first
+    fs.writeFileSync(
+      temp,
+      JSON.stringify(data, null, 2)
+    );
+
+    // 3. Validate written JSON before committing
+    const check = JSON.parse(fs.readFileSync(temp, "utf8"));
+
+    if (!check || typeof check !== "object") {
+      throw new Error("Validation failed");
+    }
+
+    // 4. Commit replace
+    fs.renameSync(temp, file);
+
+  } catch (err) {
+    console.log("❌ ATOMIC WRITE FAILED:", file, err.message);
+
+    // 5. Recovery fallback
+    try {
+      if (fs.existsSync(backup)) {
+        fs.copyFileSync(backup, file);
+        console.log("♻️ Restored backup:", file);
+      }
+    } catch (restoreErr) {
+      console.log("❌ BACKUP RESTORE FAILED:", restoreErr.message);
+    }
+  }
 }
+
+/* =========================================================
+FORCE SAVE (SAFE)
+========================================================= */
 
 function forceSave() {
- try {
-   atomicWrite(DB_FILE, DB);
-   atomicWrite(WORLD_FILE, WORLD);
-   atomicWrite(SESSION_FILE, SESSIONS);
+  try {
+    atomicWrite(DB_FILE, DB);
+    atomicWrite(WORLD_FILE, WORLD);
+    atomicWrite(SESSION_FILE, SESSIONS);
 
-   dirty = false;
+    dirty = false;
 
-   console.log("💾 Saved");
+    console.log("💾 Saved safely");
 
- } catch (err) {
-   console.log("❌ SAVE ERROR:", err.message);
- }
+  } catch (err) {
+    console.log("❌ SAVE ERROR:", err.message);
+  }
 }
 
+/* =========================================================
+AUTO SAVE LOOP
+========================================================= */
+
 setInterval(() => {
-
-if (!dirty) return;
-
-forceSave();
-
+  if (!dirty) return;
+  forceSave();
 }, CONFIG.SAVE_INTERVAL);
 
 /* =========================================================
@@ -271,6 +393,27 @@ return typeof n === "number" &&
   !isNaN(n)
   ? n
   : fallback;
+}
+
+/* =========================================================
+DEATH HELPERS (FIX 2 PATCH)
+========================================================= */
+
+function isDead(user) {
+  return !!user?.dead;
+}
+
+function checkDeath(ctx, user) {
+  if (!user) return false;
+
+  if (!user.dead) return false;
+
+  // Optional auto-sync safety: ensure hp is consistent
+  if (user.hp > 0) {
+    user.hp = 0;
+  }
+
+  return true;
 }
 
 /* =========================================================
@@ -379,18 +522,26 @@ function transaction(callback) {
 DEATH SYSTEM (AUTHORITATIVE)
 ========================================================= */
 
-function isDead(user) {
-  if (!user) return true;
-  return (user.hp <= 0 || user.dead === true);
-}
-
 function killPlayer(ctx, user) {
   if (!user) return;
-  if (user.dead === true) return; // Prevent duplicate triggers
+  if (user.dead === true) return;
 
   user.hp = 0;
   user.dead = true;
   user.deathTime = now();
+
+  // 💀 XP LOSS (50%)
+  user.xp = Math.max(0, Math.floor(user.xp * 0.5));
+
+  // 🎒 INVENTORY LOSS (50% random removal)
+  if (Array.isArray(user.inventory) && user.inventory.length > 0) {
+    const lossCount = Math.floor(user.inventory.length * 0.5);
+
+    for (let i = 0; i < lossCount; i++) {
+      const idx = Math.floor(Math.random() * user.inventory.length);
+      user.inventory.splice(idx, 1);
+    }
+  }
 
   save();
 
@@ -398,224 +549,154 @@ function killPlayer(ctx, user) {
     ctx,
 `💀 YOU HAVE BEEN ELIMINATED
 
-Your consciousness has been scattered across the fractured chain.
+☠ XP reduced by 50%
+🎒 50% of your inventory was lost
 
 Use /respawn to return to the Yodelverse.`
   );
 }
+/* =========================================================
+REBIRTH SYSTEM
+========================================================= */
 
-function checkDeath(ctx, user) {
-  if (!user) return true;
-  if (user.dead === true) return true;
+const REBIRTH_CONFIG = {
+  xpKeepRatio: 0.25,
+  creditBonus: 100,
+  energyRestore: true,
+  hpReset: true,
+  rebirthCooldown: 1000 * 60 * 10 // optional 10 min lock
+};
 
-  if (user.hp <= 0) {
-    killPlayer(ctx, user);
-    return true;
-  }
-  return false;
+function canRebirth(user) {
+  if (!user || !user.dead) return false;
+  if (!user.deathTime) return true;
+
+  const elapsed = now() - user.deathTime;
+  return elapsed > REBIRTH_CONFIG.rebirthCooldown;
 }
 
-function respawn(user) {
-  if (!user) return;
+function rebirthPlayer(user) {
+  if (!user || !user.dead) return user;
 
-  user.hp = CONFIG.MAX_HP;
-  user.energy = CONFIG.MAX_ENERGY;
+  // ⏳ gate (optional but recommended)
+  if (!canRebirth(user)) return null;
+
+  // 🧬 rebirth transformation
   user.dead = false;
-  delete user.deathTime;
 
-  // Clean residual cooldowns that might block gameplay
-  if (user.cooldowns) {
-    Object.keys(user.cooldowns).forEach(key => {
-      if (typeof user.cooldowns[key] === 'number') {
-        user.cooldowns[key] = 0; // Allow immediate action after respawn
-      }
-    });
+  if (REBIRTH_CONFIG.hpReset) {
+    user.hp = CONFIG.MAX_HP;
   }
 
-  save();
-}
+  user.xp = Math.floor(user.xp * REBIRTH_CONFIG.xpKeepRatio);
+  user.credits += REBIRTH_CONFIG.creditBonus;
 
+  if (REBIRTH_CONFIG.energyRestore) {
+    user.energy = CONFIG.MAX_ENERGY;
+  }
+
+  user.prestige = (user.prestige || 0) + 1;
+
+  user.deathTime = null;
+
+  return user;
+}
 /* =========================================================
 SESSION SYSTEM
 ========================================================= */
 
 function signSession(id) {
-
-return crypto
-  .createHmac(
-    "sha256",
-    CONFIG.SESSION_SECRET
-  )
-  .update(id)
-  .digest("hex");
+  return crypto
+    .createHmac("sha256", CONFIG.SESSION_SECRET)
+    .update(id)
+    .digest("hex");
 }
 
-function createSession(
-userId,
-topicId
-) {
+function createSession(userId, topicId) {
+  const id = crypto.randomBytes(16).toString("hex");
+  const sig = signSession(id);
 
-const id =
-  crypto.randomBytes(16)
-    .toString("hex");
+  SESSIONS[id] = {
+    userId,
+    topicId: topicId ?? null,
+    created: now(),
+    sig
+  };
 
-const sig =
-  signSession(id);
+  save();
 
-SESSIONS[id] = {
-  userId,
-  topicId:
-    topicId || null,
-
-  created: now(),
-
-  sig
-};
-
-save();
-
-return `${id}.${sig}`;
+  return `${id}.${sig}`;
 }
 
-function validateSession(
-token
-) {
+function validateSession(token) {
+  try {
+    if (!token) return null;
 
-try {
+    const parts = token.split(".");
+    if (parts.length !== 2) return null;
 
-  if (!token) return null;
+    const [id, sig] = parts;
 
-  const parts =
-    token.split(".");
+    if (signSession(id) !== sig) return null;
 
-  if (parts.length !== 2) {
+    const session = SESSIONS[id];
+    if (!session) return null;
+
+    if (session.sig !== sig) return null;
+
+    if (now() - session.created > CONFIG.SESSION_TTL) {
+      delete SESSIONS[id];
+      save();
+      return null;
+    }
+
+    return session;
+  } catch {
     return null;
   }
-
-  const [id, sig] = parts;
-
-  const expected =
-    signSession(id);
-
-  if (sig !== expected) {
-    return null;
-  }
-
-  const session =
-    SESSIONS[id];
-
-  if (!session) {
-    return null;
-  }
-
-  if (
-    session.sig !== sig
-  ) {
-    return null;
-  }
-
-  if (
-    now() - session.created >
-    CONFIG.SESSION_TTL
-  ) {
-
-    delete SESSIONS[id];
-
-    save();
-
-    return null;
-  }
-
-  return session;
-
-} catch {
-
-  return null;
-}
 }
 
 function cleanupSessions() {
+  let changed = false;
 
-let changed = false;
+  for (const id in SESSIONS) {
+    const s = SESSIONS[id];
 
-for (const id in SESSIONS) {
-
-  const s = SESSIONS[id];
-
-  if (
-    now() - s.created >
-    CONFIG.SESSION_TTL
-  ) {
-
-    delete SESSIONS[id];
-
-    changed = true;
+    if (now() - s.created > CONFIG.SESSION_TTL) {
+      delete SESSIONS[id];
+      changed = true;
+    }
   }
+
+  if (changed) save();
 }
 
-if (changed) {
-  save();
-}
-}
+setInterval(cleanupSessions, 3600000);
 
-setInterval(
-cleanupSessions,
-3600000
-);
+function resolveSessionFromCtx(ctx) {
+  const payload = ctx.startPayload;
 
-function resolveSessionFromCtx(
-ctx
-) {
+  if (typeof payload === "string" && payload.startsWith("session_")) {
+    const token = payload.slice("session_".length);
+    return validateSession(token);
+  }
 
-const payload =
-  ctx.startPayload;
-
-if (
-  payload &&
-  payload.startsWith(
-    "session_"
-  )
-) {
-
-  const token =
-    payload.replace(
-      "session_",
-      ""
-    );
-
-  return validateSession(
-    token
-  );
+  return null;
 }
 
-return null;
-}
+function hubPrivateLink(userId, ctx) {
+  const topicId =
+    ctx.message?.message_thread_id ||
+    ctx.callbackQuery?.message?.message_thread_id ||
+    null;
 
-function hubPrivateLink(
-userId,
-ctx
-) {
+  const token = createSession(userId, topicId);
 
-const topicId =
-  ctx.message
-    ?.message_thread_id ||
-  ctx.callbackQuery
-    ?.message
-    ?.message_thread_id ||
-  null;
+  const botUsername =
+    process.env.BOT_USERNAME ||
+    "FOMOYODELverseBot";
 
-const token =
-  createSession(
-    userId,
-    topicId
-  );
-
-const botUsername =
-  process.env
-    .BOT_USERNAME ||
-  "YOUR_BOT_USERNAME";
-
-return `https://t.me/${botUsername}?start=session_${token}`;
+  return `https://t.me/${botUsername}?start=session_${token}`;
 }
 
 /* =========================================================
@@ -623,89 +704,116 @@ GAME DATA
 ========================================================= */
 
 const CHARACTERS = [
-"R2D5",
-"Darth Fader",
-"Fan Solo",
-"Princess Liquidia",
-"Jabba the Whale"
+  "R2D5",
+  "Darth Fader",
+  "Fan Solo",
+  "Princess Liquidia",
+  "Jabba the Whale"
 ];
 
 const FACTIONS = [
-"HODL",
-"FOMO",
-"SCAM",
-"WHALE"
+  "HODL",
+  "FOMO",
+  "SCAM",
+  "WHALE"
 ];
 
 const EVENTS = [
-{
-  title:
-    "Whale Manipulation",
-
-  text:
-    "Massive liquidity distortion detected.",
-
-  xp: 20,
-  credits: 15,
-
-  chaos: 2,
-
-  risk: 0.25
-},
-
-{
-  title:
-    "Meme Coin Frenzy",
-
-  text:
-    "Speculators flood the markets.",
-
-  xp: 15,
-  credits: 20,
-
-  chaos: 1,
-
-  risk: 0.15
-},
-
-{
-  title:
-    "Shadow Rugpull",
-
-  text:
-    "Entire sectors collapse instantly.",
-
-  xp: 35,
-  credits: 30,
-
-  chaos: 3,
-
-  risk: 0.40
-},
-
-{
-  title:
-    "Quantum Pump",
-
-  text:
-    "Unknown forces trigger hypergrowth.",
-
-  xp: 50,
-  credits: 40,
-
-  chaos: 4,
-
-  risk: 0.50
-}
+  {
+    title: "Whale Manipulation",
+    text: "Massive liquidity distortion detected.",
+    xp: 20,
+    credits: 15,
+    chaos: 2,
+    risk: 0.25
+  },
+  {
+    title: "Meme Coin Frenzy",
+    text: "Speculators flood the markets.",
+    xp: 15,
+    credits: 20,
+    chaos: 1,
+    risk: 0.15
+  },
+  {
+    title: "Shadow Rugpull",
+    text: "Entire sectors collapse instantly.",
+    xp: 35,
+    credits: 30,
+    chaos: 3,
+    risk: 0.40
+  },
+  {
+    title: "Quantum Pump",
+    text: "Unknown forces trigger hypergrowth.",
+    xp: 50,
+    credits: 40,
+    chaos: 4,
+    risk: 0.50
+  }
 ];
 
+/* =========================================================
+ITEM SYSTEM (UPGRADED)
+========================================================= */
+
 const ITEMS = [
-"Dark Token",
-"Quantum Ore",
-"Ancient NFT",
-"Meme Crystal",
-"Whale Fragment",
-"Forbidden Ledger"
+  {
+    id: "scrap_token",
+    name: "Scrap Token",
+    rarity: "common",
+    power: 1,
+    type: "resource"
+  },
+  {
+    id: "glitch_shard",
+    name: "Glitch Shard",
+    rarity: "common",
+    power: 2,
+    type: "resource"
+  },
+  {
+    id: "dark_token",
+    name: "Dark Token",
+    rarity: "rare",
+    power: 4,
+    type: "resource"
+  },
+  {
+    id: "quantum_ore",
+    name: "Quantum Ore",
+    rarity: "rare",
+    power: 6,
+    type: "resource"
+  },
+  {
+    id: "meme_crystal",
+    name: "Meme Crystal",
+    rarity: "epic",
+    power: 10,
+    type: "boost"
+  },
+  {
+    id: "whale_fragment",
+    name: "Whale Fragment",
+    rarity: "epic",
+    power: 12,
+    type: "boost"
+  },
+  {
+    id: "forbidden_ledger",
+    name: "Forbidden Ledger",
+    rarity: "legendary",
+    power: 25,
+    type: "relic"
+  },
+  {
+    id: "void_core",
+    name: "Void Core",
+    rarity: "legendary",
+    power: 30,
+    type: "relic"
+  }
 ];
 
 /* =========================================================
@@ -921,28 +1029,26 @@ COOLDOWNS
 ========================================================= */
 
 function cooldownOk(
-user,
-key,
-ms = CONFIG.COOLDOWN
+  user,
+  key,
+  ms = CONFIG.COOLDOWN
 ) {
+  if (!user) return false;
 
-if (!user.cooldowns) {
-  user.cooldowns = {};
-}
+  if (!user.cooldowns || typeof user.cooldowns !== "object") {
+    user.cooldowns = {};
+  }
 
-const last =
-  user.cooldowns[key] || 0;
+  const nowTime = now();
+  const last = user.cooldowns[key] || 0;
 
-if (
-  now() - last < ms
-) {
-  return false;
-}
+  if (nowTime - last < ms) {
+    return false;
+  }
 
-user.cooldowns[key] =
-  now();
+  user.cooldowns[key] = nowTime;
 
-return true;
+  return true;
 }
 
 /* =========================================================
@@ -1091,99 +1197,97 @@ function damageBoss(dmg) {
   return WORLD.boss?.hp || 0;
 }
 
+
 /* =========================================================
 MENU
 ========================================================= */
 
 function homeMenu(
-userId,
-ctx
+  userId,
+  ctx
 ) {
 
-const rows = [
+  const rows = [
 
-  [
-    Markup.button.callback(
-      "⚡ EVENT",
-      "event"
-    ),
+    [
+      Markup.button.callback(
+        "⚡ EVENT",
+        "event"
+      ),
 
-    Markup.button.callback(
-      "⛏ MINE",
-      "mine"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🕶 CRIME",
-      "crime"
-    ),
-
-    Markup.button.callback(
-      "⚔ WAR",
-      "war"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🐋 BOSS",
-      "boss"
-    ),
-
-    Markup.button.callback(
-      "📊 PROFILE",
-      "profile"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🎒 INVENTORY",
-      "inventory"
-    ),
-
-    Markup.button.callback(
-      "🏪 MARKET",
-      "market"
-    )
-  ],
-
-  [
-    Markup.button.callback(
-      "🏆 LEADERBOARD",
-      "leaderboard"
-    ),
-
-    Markup.button.callback(
-      "🎁 DAILY",
-      "daily"
-    )
-  ]
-];
-
-if (CONFIG.HUB_MODE) {
-
-  rows.push([
-    Markup.button.url(
-      "🚀 OPEN PRIVATE GAME",
-      hubPrivateLink(
-        userId,
-        ctx
+      Markup.button.callback(
+        "⛏ MINE",
+        "mine"
       )
-    )
-  ]);
-}
+    ],
 
-return Markup.inlineKeyboard(
-  rows
-);
+    [
+      Markup.button.callback(
+        "🕶 CRIME",
+        "crime"
+      ),
+
+      Markup.button.callback(
+        "⚔ WAR",
+        "war"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🐋 BOSS",
+        "boss"
+      ),
+
+      Markup.button.callback(
+        "📊 PROFILE",
+        "profile"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🎒 INVENTORY",
+        "inventory"
+      ),
+
+      Markup.button.callback(
+        "🏪 MARKET",
+        "market"
+      )
+    ],
+
+    [
+      Markup.button.callback(
+        "🏆 LEADERBOARD",
+        "leaderboard"
+      ),
+
+      Markup.button.callback(
+        "🎁 DAILY",
+        "daily"
+      )
+    ]
+  ];
+
+  if (CONFIG.HUB_MODE) {
+    rows.push([
+      Markup.button.url(
+        "🚀 OPEN PRIVATE GAME",
+        hubPrivateLink(
+          userId,
+          ctx
+        )
+      )
+    ]);
+  }
+
+  return Markup.inlineKeyboard(rows);
 }
 
 function homeText(u) {
 
-return `🌌 FOMO YODELVERSE
+  return `🌌 FOMO YODELVERSE
 
 👤 ${u.name}
 
@@ -1205,9 +1309,22 @@ return `🌌 FOMO YODELVERSE
 }
 
 async function home(
-ctx,
-u
+  ctx,
+  u
 ) {
+
+  // 🔒 PATCH: STRICT ENTRY VALIDATION (MENU SECURITY FIX)
+  const session = resolveSessionFromCtx(ctx);
+  const hasValidSession = !!session;
+  const hasStartedGame = u.registered === true;
+
+  if (!hasValidSession && !hasStartedGame) {
+    return reply(
+      ctx,
+      "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
+    );
+  }
+
   // Enforce death check before showing home
   if (checkDeath(ctx, u)) {
     return reply(ctx, "💀 You are dead. Use /respawn to continue.");
@@ -1221,63 +1338,34 @@ u
 }
 
 /* =========================================================
-START + STARTUP FLOW (FIXED ORDER)
-========================================================= */
-
-bot.start(async (ctx) => {
-
-const session =
-  resolveSessionFromCtx(
-    ctx
-  );
-
-let u;
-
-if (session) {
-  u = getUser(session.userId, ctx);
-} else {
-  u = getUser(ctx.from.id, ctx);
-}
-
-// Authoritative startup order
-if (checkDeath(ctx, u)) {
-  return reply(ctx, `💀 You are dead.\n\nUse /respawn to return to the Yodelverse.`);
-}
-
-if (u.registered) {
-  return home(ctx, u);
-}
-
-return reply(
-  ctx,
-`🌌 WELCOME TO FOMO YODELVERSE
-
-Civilization collapsed after the Great Rugpull.
-
-Choose your identity.`,
-  Markup.inlineKeyboard(
-    CHARACTERS.map(
-      (c) => [
-        Markup.button.callback(
-          c,
-          "char_" + c
-        )
-      ]
-    )
-  )
-);
-});
-
-/* =========================================================
 DEATH COMMANDS
 ========================================================= */
 
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
+
   if (!isDead(u)) {
     return reply(ctx, "✅ You are not dead.");
   }
-  respawn(u);
+
+  // 🔁 FIX 1: wire respawn into rebirth system (no external respawn() call)
+  const revived = rebirthPlayer(u);
+
+  if (!revived) {
+    const waitTime =
+      REBIRTH_CONFIG.rebirthCooldown -
+      (now() - u.deathTime);
+
+    const seconds = Math.ceil(waitTime / 1000);
+
+    return reply(
+      ctx,
+      `⏳ Rebirth not ready yet.\n\nTry again in ${seconds}s`
+    );
+  }
+
+  save();
+
   return home(ctx, u);
 });
 
@@ -1540,64 +1628,64 @@ MINE
 ========================================================= */
 
 bot.action(
-"mine",
-async (ctx) => {
+  "mine",
+  async (ctx) => {
 
-  await ack(ctx);
+    await ack(ctx);
 
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
-    );
+    const u =
+      getUser(
+        ctx.from.id,
+        ctx
+      );
 
-  if (checkDeath(ctx, u)) return;
-  if (!cooldownOk(u, "mine")) {
-    return reply(ctx, "⏳ Mining cooldown active");
-  }
+    if (checkDeath(ctx, u)) return;
 
-  const gain =
-    15 +
-    Math.floor(
-      Math.random() * 35
-    ) +
-    (
-      u.miningLevel *
-      5
-    );
+    if (!cooldownOk(u, "mine")) {
+      return reply(ctx, "⏳ Mining cooldown active");
+    }
 
-  u.credits += gain;
-  u.xp += 5;
+    const gain =
+      15 +
+      Math.floor(Math.random() * 35) +
+      (u.miningLevel * 5);
 
-  let msg =
+    u.credits += gain;
+    u.xp += 5;
+
+    let msg =
 `⛏ Mining Operation Successful
 
 +${gain} Credits`;
 
-  if (
-    Math.random() > 0.82
-  ) {
+    // 🎁 LOOT SYSTEM UPGRADED
+    if (Math.random() > 0.82) {
 
-    const item =
-      rand(ITEMS);
+      const item = rand(ITEMS);
 
-    u.inventory.push(
-      item
-    );
+      // safety: ensure structured format works even if future changes happen
+      const loot = typeof item === "string"
+        ? {
+            id: item.toLowerCase().replace(/\s+/g, "_"),
+            name: item,
+            rarity: "common",
+            power: 1,
+            type: "legacy"
+          }
+        : item;
 
-    msg += `
+      u.inventory.push(loot);
+
+      msg += `
 
 🎁 Rare Item Found:
-${item}`;
+${loot.name} (${loot.rarity})`;
+    }
+
+    save();
+
+    return reply(ctx, msg);
   }
-
-  save();
-
-  return reply(
-    ctx,
-    msg
-  );
-}
 );
 
 /* =========================================================
@@ -1793,48 +1881,46 @@ INVENTORY
 ========================================================= */
 
 bot.action(
-"inventory",
-async (ctx) => {
+  "inventory",
+  async (ctx) => {
 
-  await ack(ctx);
+    await ack(ctx);
 
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
-    );
+    const u =
+      getUser(
+        ctx.from.id,
+        ctx
+      );
 
-  if (checkDeath(ctx, u)) return;
+    if (checkDeath(ctx, u)) return;
 
-  if (
-    !u.inventory.length
-  ) {
-
-    return reply(
-      ctx,
-      "🎒 Inventory Empty"
-    );
-  }
-
-  let msg =
-    "🎒 INVENTORY\n\n";
-
-  u.inventory.forEach(
-    (
-      item,
-      i
-    ) => {
-
-      msg +=
-`${i + 1}. ${item}\n`;
+    if (!u.inventory.length) {
+      return reply(
+        ctx,
+        "🎒 Inventory Empty"
+      );
     }
-  );
 
-  return reply(
-    ctx,
-    msg
-  );
-}
+    let msg = "🎒 INVENTORY\n\n";
+
+    u.inventory.forEach((item, i) => {
+
+      // backward compatibility (old string items)
+      if (typeof item === "string") {
+        msg += `${i + 1}. ${item}\n`;
+        return;
+      }
+
+      // new structured items
+      const name = item?.name || "Unknown Item";
+      const rarity = item?.rarity ? ` (${item.rarity})` : "";
+      const power = item?.power ? ` [PWR ${item.power}]` : "";
+
+      msg += `${i + 1}. ${name}${rarity}${power}\n`;
+    });
+
+    return reply(ctx, msg);
+  }
 );
 
 /* =========================================================
@@ -2337,45 +2423,298 @@ GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
 ========================================================= */
 
 bot.use((ctx, next) => {
- if (!ctx.from) return;
- if (!antiSpam(ctx.from.id)) return;
- return next();
-});
+  if (!ctx.from) return;
 
-/* =========================================================
-FALLBACK
-========================================================= */
+  const allowed = antiSpam(ctx.from.id);
 
-bot.on(
-"message",
-(ctx) => {
-
-  if (
-    ctx.message.text &&
-    ctx.message.text.startsWith(
-      "/"
-    )
-  ) {
+  if (!allowed) {
+    // soft feedback so users don’t think bot is frozen
+    try {
+      if (ctx.callbackQuery) {
+        ctx.answerCbQuery("⏳ Slow down a bit").catch(() => {});
+      } else {
+        ctx.reply("⏳ Slow down a bit").catch(() => {});
+      }
+    } catch (err) {
+      console.log("❌ ANTI-SPAM FEEDBACK ERROR:", err.message);
+    }
     return;
   }
 
-  const u =
-    getUser(
-      ctx.from.id,
-      ctx
+  return next();
+});
+
+
+/* =========================================================
+FALLBACK (CLEAN + SAFE ROUTING)
+========================================================= */
+
+bot.on("message", async (ctx) => {
+  if (!ctx.from) return;
+
+  const text = ctx.message?.text || "";
+  const isPrivate = ctx.chat?.type === "private";
+
+  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
+  if (!isPrivate) {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    const mentioned =
+      ctx.message?.entities?.some(
+        (e) => e.type === "mention"
+      );
+
+    const isCommandTrigger =
+      text.startsWith("/start") ||
+      text.startsWith("/game");
+
+    if (!mentioned && !isCommandTrigger) {
+      return;
+    }
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${
+              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
+            }?start=hub`
+          )
+        ]
+      ])
     );
+  }
+
+  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
+  const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
-  return home(ctx, u);
-}
-);
+
+  // PATCH: unified entry control (/start + /game only)
+  const allowedPrivateEntry =
+    text.startsWith("/game") ||
+    text.startsWith("/start");
+
+  if (!allowedPrivateEntry) return;
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Use /game to enter the Yodelverse properly.
+
+Press START to begin your journey.`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback("🚀 START", "start_game")]
+    ])
+  );
+});
+
+/* =========================================================
+FALLBACK (CLEAN + SAFE ROUTING)
+========================================================= */
+
+bot.on("message", async (ctx) => {
+  if (!ctx.from) return;
+
+  const text = ctx.message?.text || "";
+  const isPrivate = ctx.chat?.type === "private";
+
+  // 🧠 ONLY HANDLE GROUPS ON EXPLICIT TRIGGERS
+  if (!isPrivate) {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    const mentioned =
+      ctx.message?.entities?.some(
+        (e) => e.type === "mention"
+      );
+
+    const isCommandTrigger =
+      text.startsWith("/start") ||
+      text.startsWith("/game");
+
+    if (!mentioned && !isCommandTrigger) {
+      return;
+    }
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${
+              process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"
+            }?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  // 🧠 PRIVATE CHAT RULES (PATCHED ENTRY UNIFICATION ONLY)
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) return;
+
+  // PATCH: unified entry control (/start + /game only)
+  const allowedPrivateEntry =
+    text.startsWith("/game") ||
+    text.startsWith("/start");
+
+  if (!allowedPrivateEntry) return;
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Use /game to enter the Yodelverse properly.
+
+Press START to begin your journey.`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback("🚀 START", "start_game")]
+    ])
+  );
+});
 
 /* =========================================================
 START ENGINE
 ========================================================= */
 
-bot.launch();
+/**
+ * /start is ONLY used for opening the game entry screen
+ */
+bot.start(async (ctx) => {
 
-console.log(
-"🚀 FOMO YODELVERSE ONLINE + HUB SYSTEM ACTIVE"
-);
+  if (ctx.chat?.type !== "private") {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${botUsername}?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  const u = getUser(ctx.from.id, ctx);
+
+  // PATCH: entry intent tracking (non-breaking)
+  u._entryIntent = "start";
+
+  if (checkDeath(ctx, u)) {
+    return reply(
+      ctx,
+      "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
+    );
+  }
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+
+Press START to enter the Yodelverse.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "🚀 START",
+          "start_game"
+        )
+      ]
+    ])
+  );
+});
+
+/**
+ * MAIN ENTRY POINT
+ */
+bot.command("game", async (ctx) => {
+
+  if (ctx.chat?.type !== "private") {
+
+    const botUsername =
+      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+
+    return reply(
+      ctx,
+      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      Markup.inlineKeyboard([
+        [
+          Markup.button.url(
+            "🚀 START GAME",
+            `https://t.me/${botUsername}?start=hub`
+          )
+        ]
+      ])
+    );
+  }
+
+  const u = getUser(ctx.from.id, ctx);
+
+  // PATCH: entry intent tracking (non-breaking)
+  u._entryIntent = "game";
+
+  if (checkDeath(ctx, u)) return;
+
+  return reply(
+    ctx,
+    `🌌 FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+
+Press START to enter the Yodelverse.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "🚀 START",
+          "start_game"
+        )
+      ]
+    ])
+  );
+});
+
+/**
+ * START BUTTON HANDLER
+ */
+bot.action("start_game", async (ctx) => {
+
+  await ack(ctx);
+
+  const u = getUser(ctx.from.id, ctx);
+
+  if (checkDeath(ctx, u)) return;
+
+  u.registered = true;
+
+  if (!u.character) {
+    u.character = rand(CHARACTERS);
+  }
+
+  if (!u.faction) {
+    u.faction = rand(FACTIONS);
+  }
+
+  save();
+
+  return home(ctx, u);
+});
+ 
