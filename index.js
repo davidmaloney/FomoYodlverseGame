@@ -2538,13 +2538,15 @@ Press START to begin your journey.`,
 START ENGINE
 ========================================================= */
 
+/* =========================================================
+START ENGINE
+========================================================= */
+
 /**
  * /start is ONLY used for opening the game entry screen
  */
 bot.start(async (ctx) => {
-
   if (ctx.chat?.type !== "private") {
-
     const botUsername =
       process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
 
@@ -2564,7 +2566,6 @@ bot.start(async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  // PATCH: entry intent tracking (non-breaking)
   u._entryIntent = "start";
 
   if (checkDeath(ctx, u)) {
@@ -2583,10 +2584,7 @@ Civilization collapsed after the Great Rugpull.
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
       [
-        Markup.button.callback(
-          "🚀 START",
-          "start_game"
-        )
+        Markup.button.callback("🚀 START", "start_game")
       ]
     ])
   );
@@ -2596,9 +2594,7 @@ Press START to enter the Yodelverse.`,
  * MAIN ENTRY POINT
  */
 bot.command("game", async (ctx) => {
-
   if (ctx.chat?.type !== "private") {
-
     const botUsername =
       process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
 
@@ -2618,7 +2614,6 @@ bot.command("game", async (ctx) => {
 
   const u = getUser(ctx.from.id, ctx);
 
-  // PATCH: entry intent tracking (non-breaking)
   u._entryIntent = "game";
 
   if (checkDeath(ctx, u)) return;
@@ -2632,10 +2627,7 @@ Civilization collapsed after the Great Rugpull.
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
       [
-        Markup.button.callback(
-          "🚀 START",
-          "start_game"
-        )
+        Markup.button.callback("🚀 START", "start_game")
       ]
     ])
   );
@@ -2645,20 +2637,21 @@ Press START to enter the Yodelverse.`,
  * START BUTTON HANDLER
  */
 bot.action("start_game", async (ctx) => {
-
   await ack(ctx);
 
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  // Only register if user has proper entry intent
   if (!u._entryIntent) {
-    return reply(ctx, "❌ Please use /start or /game first to enter the Yodelverse.");
+    return reply(
+      ctx,
+      "❌ Please use /start or /game first to enter the Yodelverse."
+    );
   }
 
   u.registered = true;
-  u._entryIntent = null; // Clear entry intent after registration
+  u._entryIntent = null;
 
   if (!u.character) {
     u.character = rand(CHARACTERS);
@@ -2673,7 +2666,10 @@ bot.action("start_game", async (ctx) => {
   return home(ctx, u);
 });
 
+/* =========================================================
+LAUNCH
+========================================================= */
+
 bot.launch()
   .then(() => console.log("🌌 FOMO YODELVERSE ONLINE"))
   .catch((err) => console.error("❌ Launch error:", err));
-```
