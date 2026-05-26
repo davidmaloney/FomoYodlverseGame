@@ -1266,13 +1266,10 @@ function homeMenu(
 
   if (CONFIG.HUB_MODE) {
     rows.push([
-      Markup.button.url(
-        "🚀 OPEN PRIVATE GAME",
-        hubPrivateLink(
-          userId,
-          ctx
-        )
-      )
+      Markup.button.callback(
+  "🚀 ENTER GAME",
+  "start_game"
+)
     ]);
   }
 
