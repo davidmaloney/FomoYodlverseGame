@@ -2666,15 +2666,6 @@ bot.action("start_game", async (ctx) => {
 /* =========================================================
 LAUNCH
 ========================================================= */
-console.log("➡️ About to launch bot...");
-
-bot.launch()
-  .then(() => {
-    console.log("🌌 FOMO YODELVERSE ONLINE");
-  })
-  .catch((err) => {
-    console.error("❌ Launch error:", err);
-  });
 
 console.log("➡️ Launch call executed");
 bot.launch()
