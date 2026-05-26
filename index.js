@@ -43,7 +43,48 @@ process.exit(1);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
+/* =========================================================
+🚪 STRICT ENTRY GATE PATCH (CRITICAL FIX)
+========================================================= */
 
+function isValidGameEntry(ctx) {
+  const text = ctx.message?.text || "";
+  const payload = ctx.startPayload || "";
+
+  // Only allow explicit entry paths
+  const isStartCommand = text === "/start";
+  const isGameCommand = text === "/game";
+  const isDeepLinkSession = typeof payload === "string" && payload.startsWith("session_");
+  const isStartGameButton = ctx.callbackQuery?.data === "start_game";
+
+  return isStartCommand || isGameCommand || isDeepLinkSession || isStartGameButton;
+}
+
+/**
+ * HARD BLOCK invalid entry into gameplay system
+ * Prevents accidental routing from bot.on("message")
+ */
+function blockInvalidGameAccess(ctx) {
+  if (!ctx.from) return true;
+
+  const text = ctx.message?.text || "";
+
+  // allow only system entry points
+  if (!isValidGameEntry(ctx)) {
+
+    // silently ignore junk messages OR show minimal UX hint
+    if (ctx.chat?.type === "private") {
+      reply(
+        ctx,
+        "🌌 Yodelverse is idle.\n\nUse /start or press START to enter."
+      );
+    }
+
+    return true;
+  }
+
+  return false;
+}
 /* =========================================================
 CONFIG
 ========================================================= */
