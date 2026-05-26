@@ -1,3 +1,6 @@
+Claude
+
+cat > /mnt/user-data/outputs/bot.js << 'ENDOFFILE'
 /**
 * =========================================================
 * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION
@@ -1201,6 +1204,8 @@ function homeMenu(
   ctx
 ) {
 
+  // ✅ CHANGE 1: Removed "🚀 ENTER GAME" button from in-game menu.
+  // The only entry point is now the group /game button → deep link.
   const rows = [
 
     [
@@ -1264,15 +1269,6 @@ function homeMenu(
     ]
   ];
 
-  if (CONFIG.HUB_MODE) {
-    rows.push([
-      Markup.button.callback(
-  "🚀 ENTER GAME",
-  "start_game"
-)
-    ]);
-  }
-
   return Markup.inlineKeyboard(rows);
 }
 
@@ -1304,7 +1300,8 @@ async function home(
   u
 ) {
 
-  // 🔒 PATCH: STRICT ENTRY VALIDATION (MENU SECURITY FIX)
+  // ✅ CHANGE 2: Session check relaxed — registered users always get home screen.
+  // Deep-link session OR already registered = valid access.
   const session = resolveSessionFromCtx(ctx);
   const hasValidSession = !!session;
   const hasStartedGame = u.registered === true;
@@ -1312,7 +1309,7 @@ async function home(
   if (!hasValidSession && !hasStartedGame) {
     return reply(
       ctx,
-      "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
+      "🚫 You are not in an active game session.\n\nPlease use /start or the game button in the group to enter."
     );
   }
 
@@ -2477,27 +2474,24 @@ bot.on("message", async (ctx) => {
   // GROUP CHAT BEHAVIOR
   // -------------------------
   if (!isPrivate) {
-    const mentioned =
-      ctx.message?.entities?.some(
-        (e) => e.type === "mention"
-      );
+    // ✅ CHANGE 3: Only respond to explicit /game command in group (not /start, not mentions).
+    // Generates a real session deep link so the user lands directly in-game.
+    const isGameCommand = text === "/game" || text.startsWith(`/game@`);
 
-    const isCommandTrigger =
-      text.startsWith("/start") ||
-      text.startsWith("/game");
-
-    if (!mentioned && !isCommandTrigger) {
-      return;
+    if (!isGameCommand) {
+      return; // silently ignore everything else in the group
     }
+
+    const deepLink = hubPrivateLink(ctx.from.id, ctx);
 
     return reply(
       ctx,
-      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
       Markup.inlineKeyboard([
         [
           Markup.button.url(
-            "🚀 START GAME",
-            `https://t.me/${process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE"}?start=hub`
+            "🎮 ENTER THE YODELVERSE",
+            deepLink
           )
         ]
       ])
@@ -2522,9 +2516,7 @@ bot.on("message", async (ctx) => {
       ctx,
       `🌌 FOMO YODELVERSE
 
-Use /start or /game to enter the world.
-
-Or press the START button below.`,
+Use /start or /game to enter the world.`,
       Markup.inlineKeyboard([
         [Markup.button.callback("🚀 START", "start_game")]
       ])
@@ -2540,36 +2532,58 @@ START ENGINE
 ========================================================= */
 
 /**
- * /start is ONLY used for opening the game entry screen
+ * /start — handles both direct opens and deep-link session arrivals.
+ * If a valid session token is present, skip the intro and go straight to home.
  */
 bot.start(async (ctx) => {
+  // ✅ CHANGE 4: Deep-link session arrival → auto-launch game, no prompts.
+  if (ctx.chat?.type === "private") {
+    const session = resolveSessionFromCtx(ctx);
+
+    if (session) {
+      const u = getUser(ctx.from.id, ctx);
+
+      if (checkDeath(ctx, u)) {
+        return reply(ctx, "💀 You are dead.\n\nUse /respawn to return to the Yodelverse.");
+      }
+
+      // First-time player: assign character + faction automatically, then enter
+      if (!u.registered) {
+        if (!u.character) u.character = rand(CHARACTERS);
+        if (!u.faction)   u.faction   = rand(FACTIONS);
+        u.registered = true;
+        save();
+        broadcast(`🌌 ${u.name} joined ${u.faction}`);
+      }
+
+      return home(ctx, u);
+    }
+  }
+
+  // Non-private or no session token: show group entry button
   if (ctx.chat?.type !== "private") {
-    const botUsername =
-      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+    const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
 
     return reply(
       ctx,
-      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      "🌌 FOMO YODELVERSE\n\nUse /game in the group to get your private entry link.",
       Markup.inlineKeyboard([
         [
           Markup.button.url(
-            "🚀 START GAME",
-            `https://t.me/${botUsername}?start=hub`
+            "🎮 ENTER THE YODELVERSE",
+            `https://t.me/${botUsername}`
           )
         ]
       ])
     );
   }
 
+  // Private /start with no session: standard intro screen
   const u = getUser(ctx.from.id, ctx);
-
   u._entryIntent = "start";
 
   if (checkDeath(ctx, u)) {
-    return reply(
-      ctx,
-      "💀 You are dead.\n\nUse /respawn to return to the Yodelverse."
-    );
+    return reply(ctx, "💀 You are dead.\n\nUse /respawn to return to the Yodelverse.");
   }
 
   return reply(
@@ -2580,29 +2594,30 @@ Civilization collapsed after the Great Rugpull.
 
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
-      [
-        Markup.button.callback("🚀 START", "start_game")
-      ]
+      [Markup.button.callback("🚀 START", "start_game")]
     ])
   );
 });
 
 /**
- * MAIN ENTRY POINT
+ * /game in private chat — same as /start (entry screen).
+ * ✅ CHANGE 5: /game in groups is now handled exclusively by bot.on("message")
+ * via the group branch above, which generates a fresh deep link each time.
  */
 bot.command("game", async (ctx) => {
   if (ctx.chat?.type !== "private") {
-    const botUsername =
-      process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+    // Groups: handled by bot.on("message") — this branch should not normally be hit,
+    // but as a safety fallback we generate the deep link here too.
+    const deepLink = hubPrivateLink(ctx.from.id, ctx);
 
     return reply(
       ctx,
-      "🌌 FOMO YODELVERSE\n\nEnter your private game:",
+      "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
       Markup.inlineKeyboard([
         [
           Markup.button.url(
-            "🚀 START GAME",
-            `https://t.me/${botUsername}?start=hub`
+            "🎮 ENTER THE YODELVERSE",
+            deepLink
           )
         ]
       ])
@@ -2610,7 +2625,6 @@ bot.command("game", async (ctx) => {
   }
 
   const u = getUser(ctx.from.id, ctx);
-
   u._entryIntent = "game";
 
   if (checkDeath(ctx, u)) return;
@@ -2623,41 +2637,35 @@ Civilization collapsed after the Great Rugpull.
 
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
-      [
-        Markup.button.callback("🚀 START", "start_game")
-      ]
+      [Markup.button.callback("🚀 START", "start_game")]
     ])
   );
 });
 
 /**
  * START BUTTON HANDLER
+ * ✅ CHANGE 6: _entryIntent gate removed — any private-chat user may press START.
+ * Deep-link arrivals already bypass this via bot.start(), but direct /start users
+ * still need this path. Registered users just get home immediately.
  */
 bot.action("start_game", async (ctx) => {
   await ack(ctx);
+
+  if (ctx.chat?.type !== "private") return;
 
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) return;
 
-  if (!u._entryIntent) {
-    return reply(
-      ctx,
-      "❌ Please use /start or /game first to enter the Yodelverse."
-    );
+  if (!u.registered) {
+    if (!u.character) u.character = rand(CHARACTERS);
+    if (!u.faction)   u.faction   = rand(FACTIONS);
+    u.registered = true;
+    save();
+    broadcast(`🌌 ${u.name} joined ${u.faction}`);
   }
 
-  u.registered = true;
   u._entryIntent = null;
-
-  if (!u.character) {
-    u.character = rand(CHARACTERS);
-  }
-
-  if (!u.faction) {
-    u.faction = rand(FACTIONS);
-  }
-
   save();
 
   return home(ctx, u);
@@ -2671,3 +2679,7 @@ console.log("➡️ Launch call executed");
 bot.launch()
   .then(() => console.log("🌌 FOMO YODELVERSE ONLINE"))
   .catch((err) => console.error("❌ Launch error:", err));
+ENDOFFILE
+echo "Done. Lines: $(wc -l < /mnt/user-data/outputs/bot.js)"
+
+
