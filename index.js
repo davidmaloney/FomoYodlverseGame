@@ -43,39 +43,7 @@ process.exit(1);
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
-/* =========================================================
-🚪 STRICT ENTRY GATE PATCH (CRITICAL FIX)
-========================================================= */
 
-function isValidGameEntry(ctx) {
-  const text = ctx.message?.text || "";
-  const payload = ctx.startPayload || "";
-
-  const isStartCommand = text === "/start";
-  const isGameCommand = text === "/game";
-  const isDeepLinkSession = typeof payload === "string" && payload.startsWith("session_");
-  const isStartGameButton = ctx.callbackQuery?.data === "start_game";
-
-  return isStartCommand || isGameCommand || isDeepLinkSession || isStartGameButton;
-}
-
-function blockInvalidGameAccess(ctx) {
-  if (!ctx.from) return true;
-
-  const text = ctx.message?.text || "";
-
-  if (!isValidGameEntry(ctx)) {
-    if (ctx.chat?.type === "private") {
-      reply(
-        ctx,
-        "🌌 Yodelverse is idle.\n\nUse /start or press START to enter."
-      );
-    }
-    return true;
-  }
-
-  return false;
-}
 /* =========================================================
 CONFIG
 ========================================================= */
@@ -110,7 +78,6 @@ BOSS_MIN_HP: 1000,
 BOSS_MAX_HP: 2500,
 
 CHAOS_BOSS_TRIGGER: 15,
-MAX_CHAOS: 100,
 
 BROADCAST_LIMIT: 300,
 
@@ -132,153 +99,134 @@ const DB_FILE = "./data.json";
 const WORLD_FILE = "./world.json";
 const SESSION_FILE = "./sessions.json";
 
-/* =========================================================
-LOAD (SAFE)
-========================================================= */
-
 function load(path, fallback) {
-  try {
-    if (!fs.existsSync(path)) return fallback;
 
-    const raw = fs.readFileSync(path, "utf8");
+try {
 
-    if (!raw || !raw.trim()) return fallback;
-
-    const parsed = JSON.parse(raw);
-
-    if (typeof parsed !== "object" || parsed === null) {
-      return fallback;
-    }
-
-    return parsed;
-
-  } catch (err) {
-    console.log("❌ LOAD ERROR:", path, err.message);
+  if (!fs.existsSync(path)) {
     return fallback;
   }
-}
 
-/* =========================================================
-IN-MEMORY STATE
-========================================================= */
+  const raw =
+    fs.readFileSync(path, "utf8");
+
+  if (!raw || !raw.trim()) {
+    return fallback;
+  }
+
+  return JSON.parse(raw);
+
+} catch (err) {
+
+  console.log(
+    "❌ LOAD ERROR:",
+    err.message
+  );
+
+  return fallback;
+}
+}
 
 let DB = load(DB_FILE, {});
+
 let WORLD = load(WORLD_FILE, {
-  season: 1,
-  chaos: 1,
-  marketState: "stable",
-  boss: null,
-  factions: {
-    HODL: 0,
-    FOMO: 0,
-    SCAM: 0,
-    WHALE: 0
-  }
+season: 1,
+chaos: 1,
+marketState: "stable",
+
+boss: null,
+
+factions: {
+  HODL: 0,
+  FOMO: 0,
+  SCAM: 0,
+  WHALE: 0
+}
 });
 
-let SESSIONS = load(SESSION_FILE, {});
+let SESSIONS =
+load(SESSION_FILE, {});
+
 let dirty = false;
 
-/* =========================================================
-SAVE FLAG
-========================================================= */
-
 function save() {
-  dirty = true;
+dirty = true;
 }
-
-/* =========================================================
-ATOMIC WRITE (HARDENED)
-========================================================= */
 
 function atomicWrite(file, data) {
-  const temp = `${file}.tmp`;
-  const backup = `${file}.bak`;
+ const temp = `${file}.tmp`;
 
-  try {
-    if (fs.existsSync(file)) {
-      fs.copyFileSync(file, backup);
-    }
+ fs.writeFileSync(
+   temp,
+   JSON.stringify(data, null, 2)
+ );
 
-    fs.writeFileSync(
-      temp,
-      JSON.stringify(data, null, 2)
-    );
-
-    const check = JSON.parse(fs.readFileSync(temp, "utf8"));
-
-    if (!check || typeof check !== "object") {
-      throw new Error("Validation failed");
-    }
-
-    fs.renameSync(temp, file);
-
-  } catch (err) {
-    console.log("❌ ATOMIC WRITE FAILED:", file, err.message);
-
-    try {
-      if (fs.existsSync(backup)) {
-        fs.copyFileSync(backup, file);
-        console.log("♻️ Restored backup:", file);
-      }
-    } catch (restoreErr) {
-      console.log("❌ BACKUP RESTORE FAILED:", restoreErr.message);
-    }
-  }
+ fs.renameSync(temp, file);
 }
-
-/* =========================================================
-FORCE SAVE (SAFE)
-========================================================= */
 
 function forceSave() {
-  if (!dirty) return;
-  
-  try {
-    atomicWrite(DB_FILE, DB);
-    atomicWrite(WORLD_FILE, WORLD);
-    atomicWrite(SESSION_FILE, SESSIONS);
+ try {
+   atomicWrite(DB_FILE, DB);
+   atomicWrite(WORLD_FILE, WORLD);
+   atomicWrite(SESSION_FILE, SESSIONS);
 
-    dirty = false;
+   dirty = false;
 
-    console.log("💾 Saved safely");
+   console.log("💾 Saved");
 
-  } catch (err) {
-    console.log("❌ SAVE ERROR:", err.message);
-  }
+ } catch (err) {
+   console.log("❌ SAVE ERROR:", err.message);
+ }
 }
 
-/* =========================================================
-AUTO SAVE LOOP
-========================================================= */
-
 setInterval(() => {
-  if (!dirty) return;
-  forceSave();
+
+if (!dirty) return;
+
+forceSave();
+
 }, CONFIG.SAVE_INTERVAL);
 
 /* =========================================================
 SAFETY
 ========================================================= */
 
-process.on("uncaughtException", (err) => {
-  console.log("❌ UNCAUGHT ERROR");
-  console.log(err);
-});
+process.on(
+"uncaughtException",
+(err) => {
 
-process.on("unhandledRejection", (err) => {
-  console.log("❌ REJECTION");
+  console.log(
+    "❌ UNCAUGHT ERROR"
+  );
+
   console.log(err);
-});
+}
+);
+
+process.on(
+"unhandledRejection",
+(err) => {
+
+  console.log(
+    "❌ REJECTION"
+  );
+
+  console.log(err);
+}
+);
 
 process.on("SIGINT", () => {
-  forceSave();
-  process.exit(0);
+
+forceSave();
+
+process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  forceSave();
-  process.exit(0);
+
+forceSave();
+
+process.exit(0);
 });
 
 /* =========================================================
@@ -295,45 +243,34 @@ arr[
 const now = () => Date.now();
 
 function clamp(n, min, max) {
-  return Math.max(
-    min,
-    Math.min(max, n)
-  );
+
+return Math.max(
+  min,
+  Math.min(max, n)
+);
 }
 
 function level(xp) {
-  return Math.floor(xp / 100) + 1;
+
+return Math.floor(xp / 100) + 1;
 }
 
 function isAdmin(id) {
-  return CONFIG.ADMIN_IDS.includes(
-    String(id)
-  );
+
+return CONFIG.ADMIN_IDS.includes(
+  String(id)
+);
 }
 
-function safeNumber(n, fallback = 0) {
-  return typeof n === "number" && !isNaN(n)
-    ? n
-    : fallback;
-}
+function safeNumber(
+n,
+fallback = 0
+) {
 
-/* =========================================================
-DEATH HELPERS
-========================================================= */
-
-function isDead(user) {
-  return !!user?.dead;
-}
-
-function checkDeath(ctx, user) {
-  if (!user) return false;
-  if (!user.dead) return false;
-
-  if (user.hp > 0) {
-    user.hp = 0;
-  }
-
-  return true;
+return typeof n === "number" &&
+  !isNaN(n)
+  ? n
+  : fallback;
 }
 
 /* =========================================================
@@ -341,7 +278,6 @@ ANTISPAM + ATOMIC SAFETY
 ========================================================= */
 
 const ACTION_SPAM = {};
-const CALLBACK_SPAM = {};
 
 function antiSpam(userId, ms = 1200) {
  const last = ACTION_SPAM[userId] || 0;
@@ -354,59 +290,63 @@ function antiSpam(userId, ms = 1200) {
  return true;
 }
 
-function antiSpamCallback(userId, ms = 800) {
- const last = CALLBACK_SPAM[userId] || 0;
-
- if (now() - last < ms) {
-   return false;
- }
-
- CALLBACK_SPAM[userId] = now();
- return true;
-}
-
 /* =========================================================
 SECURITY + ROUTING HELPERS
 ========================================================= */
 
 function isPrivateChat(ctx) {
- return ctx.chat && ctx.chat.type === "private";
+
+ return ctx.chat &&
+   ctx.chat.type === "private";
 }
 
 function requirePrivate(ctx) {
+
  if (!isPrivateChat(ctx)) {
+
    reply(
      ctx,
 `🚫 Gameplay is only available in private chat.
 
 Use the private game button to continue.`
    );
+
    return false;
  }
+
  return true;
 }
 
 function requireRegistered(user, ctx) {
- if (!user || !user.registered) {
-   reply(
-     ctx,
-     "❌ You must complete registration first."
-   );
-   return false;
+
+ if (user.registered) {
+   return true;
  }
- return true;
+
+ reply(
+   ctx,
+   "❌ You must complete registration first."
+ );
+
+ return false;
 }
 
-function spendEnergy(user, amount) {
- if (!user || user.energy < amount) {
+function spendEnergy(
+ user,
+ amount
+) {
+
+ if (user.energy < amount) {
    return false;
  }
+
  user.energy -= amount;
+
  return true;
 }
 
 function restoreEnergy(user) {
- if (!user) return;
+
  user.energy = clamp(
    user.energy + 1,
    0,
@@ -415,12 +355,22 @@ function restoreEnergy(user) {
 }
 
 function transaction(callback) {
+
  try {
+
    callback();
+
    save();
+
    return true;
+
  } catch (err) {
-   console.log("❌ TRANSACTION ERROR:", err.message);
+
+   console.log(
+     "❌ TRANSACTION ERROR:",
+     err.message
+   );
+
    return false;
  }
 }
@@ -429,24 +379,18 @@ function transaction(callback) {
 DEATH SYSTEM (AUTHORITATIVE)
 ========================================================= */
 
+function isDead(user) {
+  if (!user) return true;
+  return (user.hp <= 0 || user.dead === true);
+}
+
 function killPlayer(ctx, user) {
   if (!user) return;
-  if (user.dead === true) return;
+  if (user.dead === true) return; // Prevent duplicate triggers
 
   user.hp = 0;
   user.dead = true;
   user.deathTime = now();
-
-  user.xp = Math.max(0, Math.floor(user.xp * 0.5));
-
-  if (Array.isArray(user.inventory) && user.inventory.length > 0) {
-    const lossCount = Math.floor(user.inventory.length * 0.5);
-
-    for (let i = 0; i < lossCount; i++) {
-      const idx = Math.floor(Math.random() * user.inventory.length);
-      user.inventory.splice(idx, 1);
-    }
-  }
 
   save();
 
@@ -454,54 +398,41 @@ function killPlayer(ctx, user) {
     ctx,
 `💀 YOU HAVE BEEN ELIMINATED
 
-☠ XP reduced by 50%
-🎒 50% of your inventory was lost
+Your consciousness has been scattered across the fractured chain.
 
 Use /respawn to return to the Yodelverse.`
   );
 }
 
-/* =========================================================
-REBIRTH SYSTEM
-========================================================= */
+function checkDeath(ctx, user) {
+  if (!user) return true;
+  if (user.dead === true) return true;
 
-const REBIRTH_CONFIG = {
-  xpKeepRatio: 0.25,
-  creditBonus: 100,
-  energyRestore: true,
-  hpReset: true,
-  rebirthCooldown: 1000 * 60 * 10
-};
-
-function canRebirth(user) {
-  if (!user || !user.dead) return false;
-  if (!user.deathTime) return true;
-
-  const elapsed = now() - user.deathTime;
-  return elapsed > REBIRTH_CONFIG.rebirthCooldown;
+  if (user.hp <= 0) {
+    killPlayer(ctx, user);
+    return true;
+  }
+  return false;
 }
 
-function rebirthPlayer(user) {
-  if (!user || !user.dead) return user;
-  if (!canRebirth(user)) return null;
+function respawn(user) {
+  if (!user) return;
 
+  user.hp = CONFIG.MAX_HP;
+  user.energy = CONFIG.MAX_ENERGY;
   user.dead = false;
+  delete user.deathTime;
 
-  if (REBIRTH_CONFIG.hpReset) {
-    user.hp = CONFIG.MAX_HP;
+  // Clean residual cooldowns that might block gameplay
+  if (user.cooldowns) {
+    Object.keys(user.cooldowns).forEach(key => {
+      if (typeof user.cooldowns[key] === 'number') {
+        user.cooldowns[key] = 0; // Allow immediate action after respawn
+      }
+    });
   }
 
-  user.xp = Math.floor(user.xp * REBIRTH_CONFIG.xpKeepRatio);
-  user.credits += REBIRTH_CONFIG.creditBonus;
-
-  if (REBIRTH_CONFIG.energyRestore) {
-    user.energy = CONFIG.MAX_ENERGY;
-  }
-
-  user.prestige = (user.prestige || 0) + 1;
-  user.deathTime = null;
-
-  return user;
+  save();
 }
 
 /* =========================================================
@@ -509,108 +440,182 @@ SESSION SYSTEM
 ========================================================= */
 
 function signSession(id) {
-  return crypto
-    .createHmac("sha256", CONFIG.SESSION_SECRET)
-    .update(id)
-    .digest("hex");
+
+return crypto
+  .createHmac(
+    "sha256",
+    CONFIG.SESSION_SECRET
+  )
+  .update(id)
+  .digest("hex");
 }
 
-function createSession(userId, topicId) {
-  const id = crypto.randomBytes(16).toString("hex");
-  const sig = signSession(id);
+function createSession(
+userId,
+topicId
+) {
 
-  SESSIONS[id] = {
-    userId,
-    topicId: topicId ?? null,
-    created: now(),
-    sig
-  };
+const id =
+  crypto.randomBytes(16)
+    .toString("hex");
 
-  save();
+const sig =
+  signSession(id);
 
-  return `${id}.${sig}`;
+SESSIONS[id] = {
+  userId,
+  topicId:
+    topicId || null,
+
+  created: now(),
+
+  sig
+};
+
+save();
+
+return `${id}.${sig}`;
 }
 
-function validateSession(token) {
-  try {
-    if (!token) return null;
+function validateSession(
+token
+) {
 
-    const parts = token.split(".");
-    if (parts.length !== 2) return null;
+try {
 
-    const [id, sig] = parts;
+  if (!token) return null;
 
-    if (signSession(id) !== sig) return null;
+  const parts =
+    token.split(".");
 
-    const session = SESSIONS[id];
-    if (!session) return null;
-
-    if (session.sig !== sig) return null;
-
-    if (now() - session.created > CONFIG.SESSION_TTL) {
-      delete SESSIONS[id];
-      save();
-      return null;
-    }
-
-    return session;
-  } catch {
+  if (parts.length !== 2) {
     return null;
   }
-}
 
-function validateSessionForUser(token, userId) {
-  if (!token || !userId) return null;
-  
-  const session = validateSession(token);
-  if (!session) return null;
-  
-  if (String(session.userId) !== String(userId)) return null;
-  
+  const [id, sig] = parts;
+
+  const expected =
+    signSession(id);
+
+  if (sig !== expected) {
+    return null;
+  }
+
+  const session =
+    SESSIONS[id];
+
+  if (!session) {
+    return null;
+  }
+
+  if (
+    session.sig !== sig
+  ) {
+    return null;
+  }
+
+  if (
+    now() - session.created >
+    CONFIG.SESSION_TTL
+  ) {
+
+    delete SESSIONS[id];
+
+    save();
+
+    return null;
+  }
+
   return session;
-}
 
-function cleanupSessions() {
-  let changed = false;
-
-  for (const id in SESSIONS) {
-    const s = SESSIONS[id];
-
-    if (now() - s.created > CONFIG.SESSION_TTL) {
-      delete SESSIONS[id];
-      changed = true;
-    }
-  }
-
-  if (changed) save();
-}
-
-setInterval(cleanupSessions, 3600000);
-
-function resolveSessionFromCtx(ctx) {
-  const payload = ctx.startPayload;
-
-  if (typeof payload === "string" && payload.startsWith("session_")) {
-    const token = payload.slice("session_".length);
-    return validateSessionForUser(token, ctx.from?.id);
-  }
+} catch {
 
   return null;
 }
+}
 
-function hubPrivateLink(userId, ctx) {
-  const topicId =
-    ctx.message?.message_thread_id ||
-    ctx.callbackQuery?.message?.message_thread_id ||
-    null;
+function cleanupSessions() {
 
-  const token = createSession(userId, topicId);
+let changed = false;
 
-  const botUsername =
-    process.env.BOT_USERNAME ||
-    "FOMOYODELverseBot";
+for (const id in SESSIONS) {
 
-  return `https://t.me/${botUsername}?start=session_${token}`;
+  const s = SESSIONS[id];
+
+  if (
+    now() - s.created >
+    CONFIG.SESSION_TTL
+  ) {
+
+    delete SESSIONS[id];
+
+    changed = true;
+  }
+}
+
+if (changed) {
+  save();
+}
+}
+
+setInterval(
+cleanupSessions,
+3600000
+);
+
+function resolveSessionFromCtx(
+ctx
+) {
+
+const payload =
+  ctx.startPayload;
+
+if (
+  payload &&
+  payload.startsWith(
+    "session_"
+  )
+) {
+
+  const token =
+    payload.replace(
+      "session_",
+      ""
+    );
+
+  return validateSession(
+    token
+  );
+}
+
+return null;
+}
+
+function hubPrivateLink(
+userId,
+ctx
+) {
+
+const topicId =
+  ctx.message
+    ?.message_thread_id ||
+  ctx.callbackQuery
+    ?.message
+    ?.message_thread_id ||
+  null;
+
+const token =
+  createSession(
+    userId,
+    topicId
+  );
+
+const botUsername =
+  process.env
+    .BOT_USERNAME ||
+  "YOUR_BOT_USERNAME";
+
+return `https://t.me/${botUsername}?start=session_${token}`;
 }
 
 /* =========================================================
@@ -618,291 +623,413 @@ GAME DATA
 ========================================================= */
 
 const CHARACTERS = [
-  "R2D5",
-  "Darth Fader",
-  "Fan Solo",
-  "Princess Liquidia",
-  "Jabba the Whale"
+"R2D5",
+"Darth Fader",
+"Fan Solo",
+"Princess Liquidia",
+"Jabba the Whale"
 ];
 
 const FACTIONS = [
-  "HODL",
-  "FOMO",
-  "SCAM",
-  "WHALE"
+"HODL",
+"FOMO",
+"SCAM",
+"WHALE"
 ];
 
 const EVENTS = [
-  {
-    title: "Whale Manipulation",
-    text: "Massive liquidity distortion detected.",
-    xp: 20,
-    credits: 15,
-    chaos: 2,
-    risk: 0.25
-  },
-  {
-    title: "Meme Coin Frenzy",
-    text: "Speculators flood the markets.",
-    xp: 15,
-    credits: 20,
-    chaos: 1,
-    risk: 0.15
-  },
-  {
-    title: "Shadow Rugpull",
-    text: "Entire sectors collapse instantly.",
-    xp: 35,
-    credits: 30,
-    chaos: 3,
-    risk: 0.40
-  },
-  {
-    title: "Quantum Pump",
-    text: "Unknown forces trigger hypergrowth.",
-    xp: 50,
-    credits: 40,
-    chaos: 4,
-    risk: 0.50
-  }
+{
+  title:
+    "Whale Manipulation",
+
+  text:
+    "Massive liquidity distortion detected.",
+
+  xp: 20,
+  credits: 15,
+
+  chaos: 2,
+
+  risk: 0.25
+},
+
+{
+  title:
+    "Meme Coin Frenzy",
+
+  text:
+    "Speculators flood the markets.",
+
+  xp: 15,
+  credits: 20,
+
+  chaos: 1,
+
+  risk: 0.15
+},
+
+{
+  title:
+    "Shadow Rugpull",
+
+  text:
+    "Entire sectors collapse instantly.",
+
+  xp: 35,
+  credits: 30,
+
+  chaos: 3,
+
+  risk: 0.40
+},
+
+{
+  title:
+    "Quantum Pump",
+
+  text:
+    "Unknown forces trigger hypergrowth.",
+
+  xp: 50,
+  credits: 40,
+
+  chaos: 4,
+
+  risk: 0.50
+}
 ];
 
-/* =========================================================
-ITEM SYSTEM (UPGRADED)
-========================================================= */
-
 const ITEMS = [
-  {
-    id: "scrap_token",
-    name: "Scrap Token",
-    rarity: "common",
-    power: 1,
-    type: "resource"
-  },
-  {
-    id: "glitch_shard",
-    name: "Glitch Shard",
-    rarity: "common",
-    power: 2,
-    type: "resource"
-  },
-  {
-    id: "dark_token",
-    name: "Dark Token",
-    rarity: "rare",
-    power: 4,
-    type: "resource"
-  },
-  {
-    id: "quantum_ore",
-    name: "Quantum Ore",
-    rarity: "rare",
-    power: 6,
-    type: "resource"
-  },
-  {
-    id: "meme_crystal",
-    name: "Meme Crystal",
-    rarity: "epic",
-    power: 10,
-    type: "boost"
-  },
-  {
-    id: "whale_fragment",
-    name: "Whale Fragment",
-    rarity: "epic",
-    power: 12,
-    type: "boost"
-  },
-  {
-    id: "forbidden_ledger",
-    name: "Forbidden Ledger",
-    rarity: "legendary",
-    power: 25,
-    type: "relic"
-  },
-  {
-    id: "void_core",
-    name: "Void Core",
-    rarity: "legendary",
-    power: 30,
-    type: "relic"
-  }
+"Dark Token",
+"Quantum Ore",
+"Ancient NFT",
+"Meme Crystal",
+"Whale Fragment",
+"Forbidden Ledger"
 ];
 
 /* =========================================================
 REPLY SYSTEM
 ========================================================= */
 
-async function reply(ctx, text, extra = {}) {
-  try {
-    const threadId =
-      ctx.message?.message_thread_id ||
-      ctx.callbackQuery?.message?.message_thread_id;
+async function reply(
+ctx,
+text,
+extra = {}
+) {
 
-    const options = { ...extra };
+try {
 
-    if (threadId !== undefined && threadId !== null) {
-      options.message_thread_id = threadId;
+  const threadId =
+    ctx.message
+      ?.message_thread_id ||
+    ctx.callbackQuery
+      ?.message
+      ?.message_thread_id;
+
+  return await ctx.reply(
+    text,
+    {
+      ...extra,
+
+      ...(threadId
+        ? {
+            message_thread_id:
+              threadId
+          }
+        : {})
     }
+  );
 
-    return await ctx.reply(text, options);
+} catch (err) {
 
-  } catch (err) {
-    console.log("❌ REPLY ERROR:", err.message);
-  }
+  console.log(
+    "❌ REPLY ERROR:",
+    err.message
+  );
+}
 }
 
 async function ack(ctx) {
-  try {
-    await ctx.answerCbQuery();
-  } catch {}
+
+try {
+
+  await ctx.answerCbQuery();
+
+} catch {}
 }
 
 /* =========================================================
 USER SYSTEM
 ========================================================= */
 
-function createUser(id, ctx = null) {
-  return {
-    id,
-    name: ctx?.from?.first_name || "Player",
-    username: ctx?.from?.username || "",
-    registered: false,
-    character: null,
-    faction: null,
-    xp: 0,
-    credits: CONFIG.START_CREDITS,
-    hp: CONFIG.MAX_HP,
-    energy: CONFIG.MAX_ENERGY,
-    wins: 0,
-    losses: 0,
-    reputation: 0,
-    prestige: 0,
-    inventory: [],
-    apartment: "Container Unit",
-    ship: "Rust Bucket",
-    miningLevel: 1,
-    hackingLevel: 1,
-    cooldowns: {},
-    lastDaily: 0,
-    wanted: false,
-    dead: false
-  };
+function createUser(
+id,
+ctx = null
+) {
+
+return {
+  id,
+
+  name:
+    ctx?.from
+      ?.first_name ||
+    "Player",
+
+  username:
+    ctx?.from
+      ?.username || "",
+
+  registered: false,
+
+  character: null,
+  faction: null,
+
+  xp: 0,
+
+  credits:
+    CONFIG.START_CREDITS,
+
+  hp:
+    CONFIG.MAX_HP,
+
+  energy:
+    CONFIG.MAX_ENERGY,
+
+  wins: 0,
+  losses: 0,
+
+  reputation: 0,
+  prestige: 0,
+
+  inventory: [],
+
+  apartment:
+    "Container Unit",
+
+  ship:
+    "Rust Bucket",
+
+  miningLevel: 1,
+  hackingLevel: 1,
+
+  cooldowns: {},
+
+  lastDaily: 0,
+
+  wanted: false,
+  dead: false
+};
 }
 
 function repairUser(u) {
-  if (!u) return u;
 
-  if (!u.cooldowns || typeof u.cooldowns !== "object") {
-    u.cooldowns = {};
-  }
-
-  if (!Array.isArray(u.inventory)) {
-    u.inventory = [];
-  }
-
-  u.xp = safeNumber(u.xp);
-  u.credits = safeNumber(u.credits);
-  u.hp = safeNumber(u.hp, CONFIG.MAX_HP);
-  u.energy = safeNumber(u.energy, CONFIG.MAX_ENERGY);
-  u.wins = safeNumber(u.wins);
-  u.losses = safeNumber(u.losses);
-  u.reputation = safeNumber(u.reputation);
-  u.prestige = safeNumber(u.prestige);
-  u.miningLevel = safeNumber(u.miningLevel, 1);
-  u.hackingLevel = safeNumber(u.hackingLevel, 1);
-
-  if (typeof u.dead !== "boolean") {
-    u.dead = false;
-  }
-
-  if (u.hp <= 0 && !u.dead) {
-    u.dead = true;
-  }
-
-  return u;
+if (
+  !u.cooldowns ||
+  typeof u.cooldowns !==
+    "object"
+) {
+  u.cooldowns = {};
 }
 
-function getUser(id, ctx = null) {
-  if (!DB[id]) {
-    DB[id] = createUser(id, ctx);
-    save();
-  }
+if (
+  !Array.isArray(
+    u.inventory
+  )
+) {
+  u.inventory = [];
+}
 
-  DB[id] = repairUser(DB[id]);
-  return DB[id];
+u.xp = safeNumber(u.xp);
+
+u.credits =
+  safeNumber(u.credits);
+
+u.hp = safeNumber(
+  u.hp,
+  CONFIG.MAX_HP
+);
+
+u.energy = safeNumber(
+  u.energy,
+  CONFIG.MAX_ENERGY
+);
+
+u.wins =
+  safeNumber(u.wins);
+
+u.losses =
+  safeNumber(u.losses);
+
+u.reputation =
+  safeNumber(
+    u.reputation
+  );
+
+u.prestige =
+  safeNumber(
+    u.prestige
+  );
+
+u.miningLevel =
+  safeNumber(
+    u.miningLevel,
+    1
+  );
+
+u.hackingLevel =
+  safeNumber(
+    u.hackingLevel,
+    1
+  );
+
+if (typeof u.dead !== "boolean") {
+  u.dead = false;
+}
+
+if (u.hp <= 0 && !u.dead) {
+  u.dead = true;
+}
+
+return u;
+}
+
+function getUser(
+id,
+ctx = null
+) {
+
+if (!DB[id]) {
+
+  DB[id] =
+    createUser(
+      id,
+      ctx
+    );
+
+  save();
+}
+
+DB[id] =
+  repairUser(DB[id]);
+
+return DB[id];
 }
 
 /* =========================================================
 COOLDOWNS
 ========================================================= */
 
-function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
-  if (!user) return false;
+function cooldownOk(
+user,
+key,
+ms = CONFIG.COOLDOWN
+) {
 
-  if (!user.cooldowns || typeof user.cooldowns !== "object") {
-    user.cooldowns = {};
-  }
+if (!user.cooldowns) {
+  user.cooldowns = {};
+}
 
-  const nowTime = now();
-  const last = user.cooldowns[key] || 0;
+const last =
+  user.cooldowns[key] || 0;
 
-  if (nowTime - last < ms) {
-    return false;
-  }
+if (
+  now() - last < ms
+) {
+  return false;
+}
 
-  user.cooldowns[key] = nowTime;
-  return true;
+user.cooldowns[key] =
+  now();
+
+return true;
 }
 
 /* =========================================================
 WORLD ENGINE
 ========================================================= */
 
-function addChaos(amount) {
-  WORLD.chaos = clamp(
-    WORLD.chaos + amount,
-    1,
-    CONFIG.MAX_CHAOS
-  );
+function addChaos(
+amount
+) {
 
-  if (
-    WORLD.chaos >= CONFIG.CHAOS_BOSS_TRIGGER &&
-    (!WORLD.boss || !WORLD.boss.active)
-  ) {
-    spawnBoss();
-  }
+WORLD.chaos += amount;
 
-  save();
+if (WORLD.chaos < 1) {
+  WORLD.chaos = 1;
 }
 
-function addFactionPower(faction, amount) {
-  if (!faction) return;
+if (
+  WORLD.chaos >=
+    CONFIG.CHAOS_BOSS_TRIGGER &&
+  (
+    !WORLD.boss ||
+    !WORLD.boss.active
+  )
+) {
+  spawnBoss();
+}
 
-  if (WORLD.factions[faction] === undefined) {
-    WORLD.factions[faction] = 0;
-  }
+save();
+}
 
-  WORLD.factions[faction] += amount;
-  save();
+function addFactionPower(
+faction,
+amount
+) {
+
+if (!faction) return;
+
+if (
+  WORLD.factions[faction] ===
+  undefined
+) {
+  WORLD.factions[faction] = 0;
+}
+
+WORLD.factions[faction] +=
+  amount;
+
+save();
 }
 
 /* =========================================================
 BROADCAST
 ========================================================= */
 
-async function broadcast(message) {
-  const ids = Object.keys(DB).slice(0, CONFIG.BROADCAST_LIMIT);
+async function broadcast(
+ message
+) {
 
-  for (const id of ids) {
-    try {
-      await bot.telegram.sendMessage(id, message);
-      await new Promise(resolve => setTimeout(resolve, 40));
-    } catch (err) {
-      console.log(`❌ BROADCAST FAILED ${id}:`, err.message);
-    }
-  }
+ const ids =
+   Object.keys(DB)
+     .slice(
+       0,
+       CONFIG.BROADCAST_LIMIT
+     );
+
+ for (const id of ids) {
+
+   try {
+
+     await bot.telegram.sendMessage(
+       id,
+       message
+     );
+
+     await new Promise(
+       resolve =>
+         setTimeout(resolve, 40)
+     );
+
+   } catch (err) {
+
+     console.log(
+       `❌ BROADCAST FAILED ${id}:`,
+       err.message
+     );
+   }
+ }
 }
 
 /* =========================================================
@@ -913,22 +1040,28 @@ let bossLock = false;
 
 function spawnBoss() {
  if (bossLock) return;
+
  if (WORLD.boss && WORLD.boss.active) return;
 
  bossLock = true;
 
  WORLD.boss = {
    active: true,
+
    id: crypto.randomBytes(8).toString("hex"),
+
    name: rand([
      "VOID LEVIATHAN",
      "MEGA WHALE",
      "THE RUG EMPEROR",
      "CHAIN DEVOURER"
    ]),
-   hp: CONFIG.BOSS_MIN_HP +
+
+   hp:
+     CONFIG.BOSS_MIN_HP +
      Math.floor(
-       Math.random() * (CONFIG.BOSS_MAX_HP - CONFIG.BOSS_MIN_HP)
+       Math.random() *
+       (CONFIG.BOSS_MAX_HP - CONFIG.BOSS_MIN_HP)
      )
  };
 
@@ -962,44 +1095,95 @@ function damageBoss(dmg) {
 MENU
 ========================================================= */
 
-function homeMenu(userId, ctx) {
-  const rows = [
-    [
-      Markup.button.callback("⚡ EVENT", "event"),
-      Markup.button.callback("⛏ MINE", "mine")
-    ],
-    [
-      Markup.button.callback("🕶 CRIME", "crime"),
-      Markup.button.callback("⚔ WAR", "war")
-    ],
-    [
-      Markup.button.callback("🐋 BOSS", "boss"),
-      Markup.button.callback("📊 PROFILE", "profile")
-    ],
-    [
-      Markup.button.callback("🎒 INVENTORY", "inventory"),
-      Markup.button.callback("🏪 MARKET", "market")
-    ],
-    [
-      Markup.button.callback("🏆 LEADERBOARD", "leaderboard"),
-      Markup.button.callback("🎁 DAILY", "daily")
-    ]
-  ];
+function homeMenu(
+userId,
+ctx
+) {
 
-  if (CONFIG.HUB_MODE) {
-    rows.push([
-      Markup.button.url(
-        "🚀 OPEN PRIVATE GAME",
-        hubPrivateLink(userId, ctx)
+const rows = [
+
+  [
+    Markup.button.callback(
+      "⚡ EVENT",
+      "event"
+    ),
+
+    Markup.button.callback(
+      "⛏ MINE",
+      "mine"
+    )
+  ],
+
+  [
+    Markup.button.callback(
+      "🕶 CRIME",
+      "crime"
+    ),
+
+    Markup.button.callback(
+      "⚔ WAR",
+      "war"
+    )
+  ],
+
+  [
+    Markup.button.callback(
+      "🐋 BOSS",
+      "boss"
+    ),
+
+    Markup.button.callback(
+      "📊 PROFILE",
+      "profile"
+    )
+  ],
+
+  [
+    Markup.button.callback(
+      "🎒 INVENTORY",
+      "inventory"
+    ),
+
+    Markup.button.callback(
+      "🏪 MARKET",
+      "market"
+    )
+  ],
+
+  [
+    Markup.button.callback(
+      "🏆 LEADERBOARD",
+      "leaderboard"
+    ),
+
+    Markup.button.callback(
+      "🎁 DAILY",
+      "daily"
+    )
+  ]
+];
+
+if (CONFIG.HUB_MODE) {
+
+  rows.push([
+    Markup.button.url(
+      "🚀 OPEN PRIVATE GAME",
+      hubPrivateLink(
+        userId,
+        ctx
       )
-    ]);
-  }
+    )
+  ]);
+}
 
-  return Markup.inlineKeyboard(rows);
+return Markup.inlineKeyboard(
+  rows
+);
 }
 
 function homeText(u) {
-  return `🌌 FOMO YODELVERSE
+
+return `🌌 FOMO YODELVERSE
 
 👤 ${u.name}
 
@@ -1020,24 +1204,69 @@ function homeText(u) {
 🌍 Market: ${WORLD.marketState}`;
 }
 
-async function home(ctx, u) {
-  const session = resolveSessionFromCtx(ctx);
-  const hasValidSession = !!session;
-  const hasStartedGame = u.registered === true;
-
-  if (!hasValidSession && !hasStartedGame) {
-    return reply(
-      ctx,
-      "🚫 You are not in an active game session.\n\nPlease press START to begin the game."
-    );
-  }
-
+async function home(
+ctx,
+u
+) {
+  // Enforce death check before showing home
   if (checkDeath(ctx, u)) {
     return reply(ctx, "💀 You are dead. Use /respawn to continue.");
   }
 
-  return reply(ctx, homeText(u), homeMenu(u.id, ctx));
+  return reply(
+    ctx,
+    homeText(u),
+    homeMenu(u.id, ctx)
+  );
 }
+
+/* =========================================================
+START + STARTUP FLOW (FIXED ORDER)
+========================================================= */
+
+bot.start(async (ctx) => {
+
+const session =
+  resolveSessionFromCtx(
+    ctx
+  );
+
+let u;
+
+if (session) {
+  u = getUser(session.userId, ctx);
+} else {
+  u = getUser(ctx.from.id, ctx);
+}
+
+// Authoritative startup order
+if (checkDeath(ctx, u)) {
+  return reply(ctx, `💀 You are dead.\n\nUse /respawn to return to the Yodelverse.`);
+}
+
+if (u.registered) {
+  return home(ctx, u);
+}
+
+return reply(
+  ctx,
+`🌌 WELCOME TO FOMO YODELVERSE
+
+Civilization collapsed after the Great Rugpull.
+
+Choose your identity.`,
+  Markup.inlineKeyboard(
+    CHARACTERS.map(
+      (c) => [
+        Markup.button.callback(
+          c,
+          "char_" + c
+        )
+      ]
+    )
+  )
+);
+});
 
 /* =========================================================
 DEATH COMMANDS
@@ -1045,24 +1274,10 @@ DEATH COMMANDS
 
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
-
   if (!isDead(u)) {
     return reply(ctx, "✅ You are not dead.");
   }
-
-  const revived = rebirthPlayer(u);
-
-  if (!revived) {
-    const waitTime = REBIRTH_CONFIG.rebirthCooldown - (now() - u.deathTime);
-    const seconds = Math.ceil(waitTime / 1000);
-
-    return reply(
-      ctx,
-      `⏳ Rebirth not ready yet.\n\nTry again in ${seconds}s`
-    );
-  }
-
-  save();
+  respawn(u);
   return home(ctx, u);
 });
 
@@ -1077,11 +1292,14 @@ bot.command("status", (ctx) => {
 
 🔥 Chaos: ${WORLD.chaos}
 
-🌍 Market: ${WORLD.marketState}
+🌍 Market:
+${WORLD.marketState}
 
-🐋 Boss: ${WORLD.boss?.active ? "ACTIVE" : "NONE"}
+🐋 Boss:
+${WORLD.boss?.active ? "ACTIVE" : "NONE"}
 
-💾 Save State: ${dirty ? "PENDING" : "SYNCED"}`
+💾 Save State:
+${dirty ? "PENDING" : "SYNCED"}`
  );
 });
 
@@ -1089,15 +1307,23 @@ bot.command("status", (ctx) => {
 CHARACTER FLOW
 ========================================================= */
 
-bot.action(/char_(.+)/, async (ctx) => {
+bot.action(
+/char_(.+)/,
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
-  u.character = ctx.match[1];
+  u.character =
+    ctx.match[1];
+
   save();
 
   return reply(
@@ -1109,43 +1335,64 @@ FOMO → Aggression
 SCAM → Manipulation
 WHALE → Wealth`,
     Markup.inlineKeyboard(
-      FACTIONS.map((f) => [
-        Markup.button.callback(f, "faction_" + f)
-      ])
+      FACTIONS.map(
+        (f) => [
+          Markup.button.callback(
+            f,
+            "faction_" + f
+          )
+        ]
+      )
     )
   );
-});
+}
+);
 
-bot.action(/faction_(.+)/, async (ctx) => {
+bot.action(
+/faction_(.+)/,
+async (ctx) => {
+
   await ack(ctx);
 
-  const faction = ctx.match[1];
+  const faction =
+    ctx.match[1];
 
-  if (!FACTIONS.includes(faction)) {
+  if (
+    !FACTIONS.includes(
+      faction
+    )
+  ) {
     return;
   }
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
   u.faction = faction;
   u.registered = true;
 
   save();
 
-  broadcast(`🌌 ${u.name} joined ${u.faction}`);
+  broadcast(
+    `🌌 ${u.name} joined ${u.faction}`
+  );
 
   return home(ctx, u);
-});
+}
+);
 
 /* =========================================================
 PROFILE
 ========================================================= */
 
 function profileText(u) {
-  return `📊 PROFILE
+
+return `📊 PROFILE
 
 👤 ${u.name}
 
@@ -1177,47 +1424,77 @@ XP: ${u.xp}
 
 🚀 ${u.ship}
 
-🚨 Wanted: ${u.wanted ? "YES" : "NO"}`;
+🚨 Wanted:
+${u.wanted ? "YES" : "NO"}`;
 }
 
-bot.command("profile", (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-  return reply(ctx, profileText(u));
-});
+bot.command(
+"profile",
+(ctx) => {
 
-bot.action("profile", async (ctx) => {
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  return reply(
+    ctx,
+    profileText(u)
+  );
+}
+);
+
+bot.action(
+"profile",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
-  return reply(ctx, profileText(u));
-});
+  return reply(
+    ctx,
+    profileText(u)
+  );
+}
+);
 
 /* =========================================================
 EVENTS
 ========================================================= */
 
-bot.action("event", async (ctx) => {
+bot.action(
+"event",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "event")) {
     return reply(ctx, "⏳ Event cooldown active");
   }
 
   const e = rand(EVENTS);
+
   const risk = e.risk + (WORLD.chaos * 0.01);
 
   if (Math.random() < risk) {
     const loss = 15 + Math.floor(Math.random() * 25);
     u.credits = clamp(u.credits - loss, 0, 999999);
-    u.hp = Math.max(0, u.hp - 10);
+    u.hp = Math.max(0, u.hp - 10); // Possible damage on fail
     addChaos(1);
     save();
 
@@ -1255,72 +1532,112 @@ ${e.text}
 
 🔥 Chaos: ${WORLD.chaos}`
   );
-});
+}
+);
 
 /* =========================================================
 MINE
 ========================================================= */
 
-bot.action("mine", async (ctx) => {
+bot.action(
+"mine",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
-
   if (!cooldownOk(u, "mine")) {
     return reply(ctx, "⏳ Mining cooldown active");
   }
 
-  const gain = 15 + Math.floor(Math.random() * 35) + (u.miningLevel * 5);
+  const gain =
+    15 +
+    Math.floor(
+      Math.random() * 35
+    ) +
+    (
+      u.miningLevel *
+      5
+    );
+
   u.credits += gain;
   u.xp += 5;
 
-  let msg = `⛏ Mining Operation Successful\n\n+${gain} Credits`;
+  let msg =
+`⛏ Mining Operation Successful
 
-  if (Math.random() > 0.82) {
-    const item = rand(ITEMS);
++${gain} Credits`;
 
-    const loot = typeof item === "string"
-      ? {
-          id: item.toLowerCase().replace(/\s+/g, "_"),
-          name: item,
-          rarity: "common",
-          power: 1,
-          type: "legacy"
-        }
-      : item;
+  if (
+    Math.random() > 0.82
+  ) {
 
-    u.inventory.push(loot);
+    const item =
+      rand(ITEMS);
 
-    msg += `\n\n🎁 Rare Item Found:\n${loot.name} (${loot.rarity})`;
+    u.inventory.push(
+      item
+    );
+
+    msg += `
+
+🎁 Rare Item Found:
+${item}`;
   }
 
   save();
 
-  return reply(ctx, msg);
-});
+  return reply(
+    ctx,
+    msg
+  );
+}
+);
 
 /* =========================================================
 CRIME
 ========================================================= */
 
-bot.action("crime", async (ctx) => {
+bot.action(
+"crime",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "crime")) {
     return reply(ctx, "⏳ Crime cooldown active");
   }
 
-  if (Math.random() < 0.45) {
-    const loss = 20 + Math.floor(Math.random() * 40);
-    u.credits = clamp(u.credits - loss, 0, 999999);
-    u.hp = Math.max(0, u.hp - 15);
+  if (
+    Math.random() < 0.45
+  ) {
+
+    const loss =
+      20 +
+      Math.floor(
+        Math.random() * 40
+      );
+
+    u.credits = clamp(
+      u.credits - loss,
+      0,
+      999999
+    );
+
+    u.hp = Math.max(0, u.hp - 15); // Risk of injury
     u.wanted = true;
 
     save();
@@ -1337,8 +1654,14 @@ bot.action("crime", async (ctx) => {
     );
   }
 
-  const gain = 40 + Math.floor(Math.random() * 90);
+  const gain =
+    40 +
+    Math.floor(
+      Math.random() * 90
+    );
+
   u.credits += gain;
+
   u.reputation += 1;
 
   addChaos(1);
@@ -1353,28 +1676,44 @@ bot.action("crime", async (ctx) => {
 
 +1 Reputation`
   );
-});
+}
+);
 
 /* =========================================================
 WAR
 ========================================================= */
 
-bot.action("war", async (ctx) => {
+bot.action(
+"war",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "war", 8000)) {
     return reply(ctx, "⏳ War cooldown active");
   }
 
-  const reward = 20 + Math.floor(Math.random() * 50);
-  u.xp += reward;
-  u.hp = Math.max(0, u.hp - 8);
+  const reward =
+    20 +
+    Math.floor(
+      Math.random() * 50
+    );
 
-  addFactionPower(u.faction, reward);
+  u.xp += reward;
+  u.hp = Math.max(0, u.hp - 8); // Combat risk
+
+  addFactionPower(
+    u.faction,
+    reward
+  );
+
   addChaos(2);
 
   save();
@@ -1391,35 +1730,51 @@ ${u.name} fought for ${u.faction}
 
 🔥 Chaos Increased`
   );
-});
+}
+);
 
 /* =========================================================
 BOSS
 ========================================================= */
 
-bot.action("boss", async (ctx) => {
+bot.action(
+"boss",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
-  if (!WORLD.boss || !WORLD.boss.active) {
+  if (
+    !WORLD.boss ||
+    !WORLD.boss.active
+  ) {
     spawnBoss();
   }
 
-  const dmg = 25 + Math.floor(Math.random() * 50);
+  const dmg =
+    25 +
+    Math.floor(
+      Math.random() * 50
+    );
+
   damageBoss(dmg);
 
   u.xp += 10;
-  u.hp = Math.max(0, u.hp - 12);
+  u.hp = Math.max(0, u.hp - 12); // Boss fight risk
 
   save();
 
   if (checkDeath(ctx, u)) return;
 
-  const hp = WORLD.boss?.hp || 0;
+  const hp =
+    WORLD.boss?.hp || 0;
 
   return reply(
     ctx,
@@ -1427,54 +1782,73 @@ bot.action("boss", async (ctx) => {
 
 💥 Damage: ${dmg}
 
-❤️ Remaining HP: ${hp}`
+❤️ Remaining HP:
+${hp}`
   );
-});
+}
+);
 
 /* =========================================================
 INVENTORY
 ========================================================= */
 
-bot.action("inventory", async (ctx) => {
+bot.action(
+"inventory",
+async (ctx) => {
+
   await ack(ctx);
 
-  const u = getUser(ctx.from.id, ctx);
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
 
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
-  if (!u.inventory.length) {
-    return reply(ctx, "🎒 Inventory Empty");
+  if (
+    !u.inventory.length
+  ) {
+
+    return reply(
+      ctx,
+      "🎒 Inventory Empty"
+    );
   }
 
-  let msg = "🎒 INVENTORY\n\n";
+  let msg =
+    "🎒 INVENTORY\n\n";
 
-  u.inventory.forEach((item, i) => {
-    if (typeof item === "string") {
-      msg += `${i + 1}. ${item}\n`;
-      return;
+  u.inventory.forEach(
+    (
+      item,
+      i
+    ) => {
+
+      msg +=
+`${i + 1}. ${item}\n`;
     }
+  );
 
-    const name = item?.name || "Unknown Item";
-    const rarity = item?.rarity ? ` (${item.rarity})` : "";
-    const power = item?.power ? ` [PWR ${item.power}]` : "";
-
-    msg += `${i + 1}. ${name}${rarity}${power}\n`;
-  });
-
-  return reply(ctx, msg);
-});
+  return reply(
+    ctx,
+    msg
+  );
+}
+);
 
 /* =========================================================
 MARKET
 ========================================================= */
 
-bot.action("market", async (ctx) => {
+bot.action(
+"market",
+async (ctx) => {
+
   await ack(ctx);
 
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
-  if (!requireRegistered(u, ctx)) return;
 
   return reply(
     ctx,
@@ -1485,6 +1859,523 @@ bot.action("market", async (ctx) => {
 ⛏ Quantum Drill — 250
 🏠 Luxury Apartment — 500`,
     Markup.inlineKeyboard([
-      [Markup.button.callback("⚡ Buy Energy", "buy_energy")],
-      [Markup.button.callback("🛡 Buy Armor", "buy_armor")],
-      [Markup.button.callback("
+      [
+        Markup.button.callback(
+          "⚡ Buy Energy",
+          "buy_energy"
+        )
+      ],
+
+      [
+        Markup.button.callback(
+          "🛡 Buy Armor",
+          "buy_armor"
+        )
+      ],
+
+      [
+        Markup.button.callback(
+          "⛏ Buy Drill",
+          "buy_drill"
+        )
+      ],
+
+      [
+        Markup.button.callback(
+          "🏠 Buy Apartment",
+          "buy_home"
+        )
+      ]
+    ])
+  );
+}
+);
+
+bot.action(
+"buy_energy",
+async (ctx) => {
+
+  await ack(ctx);
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+
+  if (
+    u.credits < 50
+  ) {
+
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
+  }
+
+  u.credits -= 50;
+
+  u.energy = clamp(
+    u.energy + 25,
+    0,
+    CONFIG.MAX_ENERGY
+  );
+
+  save();
+
+  return reply(
+    ctx,
+    "⚡ Energy restored"
+  );
+}
+);
+
+bot.action(
+"buy_armor",
+async (ctx) => {
+
+  await ack(ctx);
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+
+  if (
+    u.credits < 100
+  ) {
+
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
+  }
+
+  u.credits -= 100;
+
+  u.hp = clamp(
+    u.hp + 25,
+    0,
+    CONFIG.MAX_HP
+  );
+
+  save();
+
+  return reply(
+    ctx,
+    "🛡 Armor equipped"
+  );
+}
+);
+
+bot.action(
+"buy_drill",
+async (ctx) => {
+
+  await ack(ctx);
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+
+  if (
+    u.credits < 250
+  ) {
+
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
+  }
+
+  u.credits -= 250;
+
+  u.miningLevel += 1;
+
+  save();
+
+  return reply(
+    ctx,
+`⛏ Mining upgraded
+
+Level ${u.miningLevel}`
+  );
+}
+);
+
+bot.action(
+"buy_home",
+async (ctx) => {
+
+  await ack(ctx);
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+
+  if (
+    u.credits < 500
+  ) {
+
+    return reply(
+      ctx,
+      "❌ Not enough credits"
+    );
+  }
+
+  u.credits -= 500;
+
+  u.apartment =
+    "Luxury Sky Apartment";
+
+  save();
+
+  return reply(
+    ctx,
+    "🏠 Apartment upgraded"
+  );
+}
+);
+
+/* =========================================================
+DAILY
+========================================================= */
+
+bot.action(
+"daily",
+async (ctx) => {
+
+  await ack(ctx);
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+
+  if (
+    now() -
+    u.lastDaily <
+    CONFIG.DAILY_COOLDOWN
+  ) {
+
+    return reply(
+      ctx,
+      "⏳ Daily already claimed"
+    );
+  }
+
+  u.lastDaily = now();
+
+  u.credits += 100;
+  u.xp += 25;
+
+  save();
+
+  return reply(
+    ctx,
+`🎁 DAILY REWARD
+
++100 Credits
+
++25 XP`
+  );
+}
+);
+
+/* =========================================================
+LEADERBOARD
+========================================================= */
+
+function leaderboardText() {
+
+const top =
+  Object.values(DB)
+    .sort(
+      (a, b) =>
+        b.xp - a.xp
+    )
+    .slice(0, 10);
+
+let msg =
+  "🏆 LEADERBOARD\n\n";
+
+top.forEach(
+  (u, i) => {
+
+    msg +=
+`${i + 1}. ${u.name}
+${u.xp} XP\n\n`;
+  }
+);
+
+msg +=
+  "⚔ FACTION POWER\n\n";
+
+for (
+  const f in WORLD.factions
+) {
+
+  msg +=
+`${f}: ${WORLD.factions[f]}\n`;
+}
+
+msg +=
+`\n🔥 Chaos: ${WORLD.chaos}`;
+
+return msg;
+}
+
+bot.action(
+"leaderboard",
+async (ctx) => {
+
+  await ack(ctx);
+
+  return reply(
+    ctx,
+    leaderboardText()
+  );
+}
+);
+
+bot.command(
+"leaderboard",
+(ctx) => {
+
+  return reply(
+    ctx,
+    leaderboardText()
+  );
+}
+);
+
+/* =========================================================
+MENU
+========================================================= */
+
+bot.command(
+"menu",
+(ctx) => {
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+  return home(ctx, u);
+}
+);
+
+/* =========================================================
+ADMIN
+========================================================= */
+
+bot.command(
+"broadcast",
+(ctx) => {
+
+  if (
+    !isAdmin(
+      ctx.from.id
+    )
+  ) {
+    return;
+  }
+
+  const msg =
+    ctx.message.text
+      .replace(
+        "/broadcast",
+        ""
+      )
+      .trim();
+
+  if (!msg) {
+
+    return reply(
+      ctx,
+      "Usage: /broadcast message"
+    );
+  }
+
+  broadcast(
+`📢 ADMIN ALERT
+
+${msg}`
+  );
+
+  return reply(
+    ctx,
+    "✅ Broadcast sent"
+  );
+}
+);
+
+bot.command(
+"spawnboss",
+(ctx) => {
+
+  if (
+    !isAdmin(
+      ctx.from.id
+    )
+  ) {
+    return;
+  }
+
+  spawnBoss();
+
+  return reply(
+    ctx,
+    "🐋 Boss spawned"
+  );
+}
+);
+
+bot.command(
+"chaos",
+(ctx) => {
+
+  if (
+    !isAdmin(
+      ctx.from.id
+    )
+  ) {
+    return;
+  }
+
+  const amount =
+    parseInt(
+      ctx.message.text
+        .split(" ")[1]
+    );
+
+  if (
+    isNaN(amount)
+  ) {
+
+    return reply(
+      ctx,
+      "Usage: /chaos number"
+    );
+  }
+
+  WORLD.chaos = amount;
+
+  save();
+
+  return reply(
+    ctx,
+`🔥 Chaos set to ${amount}`
+  );
+}
+);
+
+/* =========================================================
+RANDOM EVENTS
+========================================================= */
+
+setInterval(() => {
+
+if (
+  Math.random() > 0.90
+) {
+
+  addChaos(1);
+
+  const msg = rand([
+    "🌌 Market instability detected.",
+    "📉 A major token collapsed.",
+    "🐋 Whale fleets moving through sectors.",
+    "⚠ Illegal mining activity rising.",
+    "💀 Shadow hackers breached the chain."
+  ]);
+
+  broadcast(msg);
+}
+
+}, 120000);
+
+/* =========================================================
+MARKET SHIFTS
+========================================================= */
+
+setInterval(() => {
+
+WORLD.marketState =
+  rand([
+    "stable",
+    "bullish",
+    "volatile",
+    "crashing"
+  ]);
+
+save();
+
+}, 300000);
+
+/* =========================================================
+GLOBAL MIDDLEWARE (ANTISPAM + DEATH GUARD)
+========================================================= */
+
+bot.use((ctx, next) => {
+ if (!ctx.from) return;
+ if (!antiSpam(ctx.from.id)) return;
+ return next();
+});
+
+/* =========================================================
+FALLBACK
+========================================================= */
+
+bot.on(
+"message",
+(ctx) => {
+
+  if (
+    ctx.message.text &&
+    ctx.message.text.startsWith(
+      "/"
+    )
+  ) {
+    return;
+  }
+
+  const u =
+    getUser(
+      ctx.from.id,
+      ctx
+    );
+
+  if (checkDeath(ctx, u)) return;
+  return home(ctx, u);
+}
+);
+
+/* =========================================================
+START ENGINE
+========================================================= */
+
+bot.launch();
+
+console.log(
+"🚀 FOMO YODELVERSE ONLINE + HUB SYSTEM ACTIVE"
+);
