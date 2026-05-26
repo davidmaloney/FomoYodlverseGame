@@ -1340,11 +1340,9 @@ bot.command("respawn", async (ctx) => {
     return reply(ctx, "✅ You are not dead.");
   }
 
-  // 🔁 FIX 1: wire respawn into rebirth system (no external respawn() call)
   const revived = rebirthPlayer(u);
 
   if (!revived) {
-    // PATCH: handle case where deathTime might be missing
     const deathTime = u.deathTime || now();
     const waitTime =
       REBIRTH_CONFIG.rebirthCooldown -
@@ -1361,6 +1359,50 @@ bot.command("respawn", async (ctx) => {
   save();
 
   return home(ctx, u);
+});
+
+
+// NEW: Button-based rebirth system
+bot.action("rebirth", async (ctx) => {
+  await ack(ctx);
+
+  const u = getUser(ctx.from.id, ctx);
+
+  if (!u) return;
+
+  // Alive users should not use rebirth
+  if (!u.dead) {
+    return reply(
+      ctx,
+      "⚠️ You are still alive. Rebirth is only available after elimination."
+    );
+  }
+
+  const revived = rebirthPlayer(u);
+
+  if (!revived) {
+    const deathTime = u.deathTime || now();
+    const waitTime =
+      REBIRTH_CONFIG.rebirthCooldown -
+      (now() - deathTime);
+
+    const seconds = Math.max(0, Math.ceil(waitTime / 1000));
+
+    return reply(
+      ctx,
+      `⏳ Rebirth is not ready yet.\n\nTry again in ${seconds}s`
+    );
+  }
+
+  save();
+
+  return reply(
+    ctx,
+`♻️ REBIRTH COMPLETE
+
+You have returned to the Yodelverse.
+Some progress has been retained, but identity has shifted.`
+  ).then(() => home(ctx, u));
 });
 
 bot.command("status", (ctx) => {
