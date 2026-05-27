@@ -189,99 +189,99 @@ async function START_ORGANISER(ctx, next) {
     const u = getUser(ctx.from.id, ctx);
     const text = ctx.message?.text || "";
     const isPrivate = ctx.chat?.type === "private";
-
     const session = resolveSessionFromCtx(ctx);
-    const isGameCmd = text === "/game" || text.startsWith("/game@");
-    const isStartCmd = text.startsWith("/start");
 
-    // -------------------------------
-    // 💀 DEAD USER GATE
-    // -------------------------------
-    if (checkDeath(ctx, u)) {
-      await reply(ctx, "💀 You are dead.\n\nUse /respawn or ♻️ REBIRTH to return.");
-      return;
+    const isStartCmd = text.startsWith("/start");
+    const isGameCmd  = text.startsWith("/game");
+
+    // =====================================================
+    // 💀 DEATH STATE (never blocks navigation, only informs)
+    // =====================================================
+    if (u.dead) {
+      return reply(ctx,
+        "💀 You are dead in the Yodelverse.\n\nOpen the bot and use ♻️ REBIRTH or /respawn."
+      );
     }
 
-    // -------------------------------
-    // 🌍 GROUP CHAT → ALWAYS DEEP LINK
-    // -------------------------------
+    // =====================================================
+    // 🌍 GROUP CHAT ENTRY (ONLY /game generates link)
+    // =====================================================
     if (!isPrivate) {
-      if (!isGameCmd) return next ? next() : null;
+      if (!isGameCmd) return next?.();
 
       const link = hubPrivateLink(ctx.from.id, ctx);
 
-      await reply(ctx,
-        "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
+      return reply(ctx,
+        "🌌 Enter your private Yodelverse session:",
         Markup.inlineKeyboard([
-          [Markup.button.url("🎮 ENTER THE YODELVERSE", link)]
+          [Markup.button.url("🎮 ENTER GAME", link)]
         ])
       );
-      return;
     }
 
-    // -------------------------------
-    // 🔗 DEEP LINK ENTRY (PRIVATE)
-    // -------------------------------
+    // =====================================================
+    // 🔗 SESSION ENTRY (PRIMARY REGISTRATION PATH)
+    // =====================================================
     if (session) {
       if (!u.registered) {
-        if (!u.character) u.character = rand(CHARACTERS);
-        if (!u.faction)   u.faction   = rand(FACTIONS);
-
+        u.character = u.character || rand(CHARACTERS);
+        u.faction   = u.faction   || rand(FACTIONS);
         u.registered = true;
+
+        // tracking for UI refresh system
+        u.uiTicks = 0;
+
         save();
         broadcast(`🌌 ${u.name} joined ${u.faction}`);
+      }
 
-        await reply(ctx,
-`🌌 Welcome to the FOMO YODELVERSE, ${u.name}!
+      return home(ctx, u);
+    }
 
-🧬 Character: ${u.character}
-⚔ Faction: ${u.faction}
+    // =====================================================
+    // 👤 REGISTERED USERS (ALWAYS GO HOME)
+    // =====================================================
+    if (u.registered) {
+      u.uiTicks = (u.uiTicks || 0) + 1;
 
-The Yodelverse awaits.`
+      // 🔁 UI REFRESH MECHANISM (your "rebuild keyboard" idea)
+      const shouldRefreshUI = u.uiTicks % 7 === 0;
+
+      if (shouldRefreshUI) {
+        return reply(
+          ctx,
+          homeText(u),
+          homeMenu(u.id, ctx)
         );
       }
 
-      await home(ctx, u);
-      return;
+      return home(ctx, u);
     }
 
-    // -------------------------------
-    // 👤 RETURNING REGISTERED USER
-    // -------------------------------
-    if (u.registered) {
-      await reply(ctx,
-        `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
-      );
-
-      await home(ctx, u);
-      return;
-    }
-
-    // -------------------------------
-    // 🚀 NEW USER ENTRY
-    // -------------------------------
-    const isEntryAttempt =
+    // =====================================================
+    // 🚀 NEW USER FLOW (ONLY ONE ENTRY PATH)
+    // =====================================================
+    const entryAttempt =
       isStartCmd ||
       isGameCmd ||
       text === "";
 
-    if (!isEntryAttempt) {
-      await reply(ctx,
-        "🌌 FOMO YODELVERSE\n\nUse /start or /game to enter.",
+    if (!entryAttempt) {
+      return reply(ctx,
+        "🌌 Use /start or /game to enter the Yodelverse.",
         Markup.inlineKeyboard([
           [Markup.button.callback("🚀 START", "start_game")]
         ])
       );
-      return;
     }
 
-    await reply(ctx,
+    return reply(ctx,
 `🌌 FOMO YODELVERSE
 
-Civilization collapsed after the Great Rugpull.
-The blockchain is now a warzone.
+The system collapsed.
+Only those who press START can enter reality.
 
-Press START to enter the Yodelverse.`,
+Press START to begin.`,
       Markup.inlineKeyboard([
         [Markup.button.callback("🚀 START", "start_game")]
       ])
@@ -291,26 +291,6 @@ Press START to enter the Yodelverse.`,
     console.log("❌ START_ORGANISER ERROR:", err.message);
   }
 }
-
-/**
- * SAFETY WRAPPER:
- * This automatically plugs into your bot without touching handlers.
- */
-bot.use((ctx, next) => {
-  // only intercept entry-related flows
-  const text = ctx.message?.text || "";
-  const isEntry =
-    text.startsWith("/start") ||
-    text.startsWith("/game") ||
-    ctx.startPayload ||
-    ctx.chat?.type !== "private";
-
-  if (isEntry) {
-    return START_ORGANISER(ctx, next);
-  }
-
-  return next();
-});
 /* =========================================================
    DEATH HELPERS
 ========================================================= */
