@@ -171,6 +171,109 @@ const level = xp  => Math.floor(xp / 100) + 1;
 const isAdmin = id => CONFIG.ADMIN_IDS.includes(String(id));
 const safeNumber = (n, fallback = 0) =>
   typeof n === "number" && !isNaN(n) ? n : fallback;
+
+/* =========================================================
+   🌌 FOMOYODL ONBOARDING GATE
+   Passive first-time user onboarding system
+========================================================= */
+
+/**
+ * PURPOSE:
+ * - Detect first-time users in group chats
+ * - Automatically surface game entry button
+ * - Prevent spam/repeating welcomes
+ * - Funnel users into private bot correctly
+ *
+ * IMPORTANT:
+ * This does NOT register users.
+ * It ONLY creates the bridge into the bot.
+ */
+
+const ONBOARDING = {
+  enabled: true,
+
+  // how long before user can be welcomed again
+  cooldown: 1000 * 60 * 60 * 24, // 24h
+
+  // store who already saw onboarding
+  seenUsers: {}
+};
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function hasSeenOnboarding(userId) {
+  const last = ONBOARDING.seenUsers[userId];
+  if (!last) return false;
+
+  return (Date.now() - last) < ONBOARDING.cooldown;
+}
+
+function markOnboardingSeen(userId) {
+  ONBOARDING.seenUsers[userId] = Date.now();
+}
+
+/* =========================================================
+   AUTO ENTRY DETECTOR
+========================================================= */
+
+bot.use(async (ctx, next) => {
+  try {
+    if (!ONBOARDING.enabled) {
+      return next();
+    }
+
+    if (!ctx.from || !ctx.chat) {
+      return next();
+    }
+
+    // only operate in groups
+    const isPrivate = ctx.chat.type === "private";
+
+    if (isPrivate) {
+      return next();
+    }
+
+    const userId = ctx.from.id;
+
+    // existing registered player?
+    const existing = DB[userId];
+
+    if (existing?.registered) {
+      return next();
+    }
+
+    // avoid spamming same user repeatedly
+    if (hasSeenOnboarding(userId)) {
+      return next();
+    }
+
+    markOnboardingSeen(userId);
+
+    // generate private entry link
+    const link = hubPrivateLink(userId, ctx);
+
+    await reply(
+      ctx,
+`🌌 Welcome to FOMOYODLVERSE
+
+The chain has collapsed.
+Survivors now fight for credits, factions, and control of the Yodelverse.
+
+Start your journey below.`,
+      Markup.inlineKeyboard([
+        [Markup.button.url("🎮 ENTER FOMOYODLVERSE", link)]
+      ])
+    );
+
+    return next();
+
+  } catch (err) {
+    console.log("❌ FOMOYODL ONBOARDING ERROR:", err.message);
+    return next();
+  }
+});
 /* =========================================================
    🌌 START ORGANISER — DROP-IN ENTRY CONTROLLER
    (NO OTHER CODE CHANGES REQUIRED)
