@@ -1,89 +1,27 @@
 /**
  * =========================================================
- * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION v2.3
+ * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.4
  * =========================================================
  *
- * INCLUDED:
- * - Stable debug engine
- * - Telegram topic/forum support
- * - Private hub sessions
- * - Session persistence + validation + cleanup + security
- * - Deep-link gameplay (group → private bot)
- * - Welcome-back message for returning users
- * - Full market system
- * - Daily rewards + streak bonuses
- * - Admin commands
- * - Boss raids (expanded roster, tiered difficulty, participant tracking)
- * - World chaos engine + market shifts
- * - Inventory drops from ALL activities
- * - Item USE system (consume items for HP/energy)
- * - Safe atomic persistence
- * - Cooldowns + antispam (CORRECTLY ORDERED)
- * - Broadcast system (non-blocking, fire-and-forget)
- * - Rebirth system (button + command)
- * - Slightly harder difficulty (real death risk)
- * - Faction influence on world state
- * - Reputation gates on crime outcomes
- * - Wanted level mechanics
- * - Mining level meaningful scaling
- * - Chaos affects all mechanics dynamically
- * - War streaks + faction bonuses
- * - Boss participant kill-credit tracking
- * - HACKING system (hackingLevel now used)
- * - ENERGY properly gated on all actions
- * - Faction dominance bonus actually applied
- * - repairWorld() added for schema safety
- * - START_ORGANISER wired correctly
- * - onboarding seenUsers persisted in WORLD
- * - /top alias for leaderboard
- * - Prestige passive income on daily
- * - Elite enemy rare encounters in WAR
- * - Market bulletin board (/bulletin)
- * - Boss phase taunts
- *
- * FIX v2.1:
- * - CRITICAL: Antispam middleware moved to TOP (before all handlers)
- * - broadcast() made truly fire-and-forget with proper error isolation
- * - spawnBoss() protected with async-safe lock and non-blocking broadcast
- * - addChaos() no longer blocks callback execution
- * - Random world event broadcasts rate-limited and non-blocking
- * - Dead code cleaned up, systems connected more intelligently
- *
- * FIX / EXPAND v2.2:
- * - Energy costs now actually enforced on all gameplay actions
- * - hackingLevel wired to a real /hack system
- * - Faction dominance bonus applied to credit/XP gains world-wide
- * - repairWorld() added — guards against missing WORLD fields on load
- * - onboarding seenUsers persisted in WORLD (survives restarts)
- * - START_ORGANISER defined but was never called — now wired properly
- * - requirePrivate() was defined but never called — used in /hack
- * - /top alias added for leaderboard
- * - Boss phase taunts (at 66%, 33%, 10% HP)
- * - Elite enemy rare encounters in WAR (bonus XP, rare drop)
- * - Prestige daily bonus (passive income scales with prestige)
- * - Minor balance pass: energy costs tuned, crime reward floor raised
- * - schema normalization: all new fields back-compat repaired
- * - worldEventLock uses proper async-aware flag release
- * - No architectural changes — pure organic expansion
- *
- * FIX / EXPAND v2.3:
- * - BOSS BUTTON BUG FIXED: spawnBoss() is async-safe; boss state
- *   now verified after spawn before attempting attack
- * - /respawn now shows ARE YOU SURE confirmation with full reset
- *   (rebirth remains the soft revival path; respawn = hard reset)
- * - Inline USE/SELL inventory system — players tap buttons instead
- *   of typing /use 3 (commands still work as fallback)
- * - Menu auto-reappears every MSG_MENU_INTERVAL messages so players
- *   never have to scroll up to find their action buttons
- * - Star Wars crypto satire pass: boss names, item names, lore lines
- *   refreshed. Characters unchanged.
- * - Beginner flow verified smooth end-to-end
- *
- * FUTURE SQLITE NOTE:
- * Storage layer is isolated in load()/atomicWrite()/forceSave().
- * DB, WORLD, SESSIONS are plain objects.
- * To migrate: replace load() and atomicWrite() with SQLite equivalents.
- * All game logic reads/writes only DB[id] and WORLD — no raw fs calls.
+ * CHANGES v2.4:
+ * - RENAMED: yodelverse → yodlverse, fomoyodel → fomoyodl everywhere
+ * - CHARACTER LIST updated to full Star Wars satire roster:
+ *   FOMO Yodl, LFG Skytalker, Fan SOLo, OBi FOMO-WannaBe,
+ *   Princess Liquidia, ChewStacka, Web3PO, R2-DeFi,
+ *   Admiral Growbar, Darth F.A.D.E.R., Jabba the Whale,
+ *   Discount Duco, Darth Scamious
+ * - DEAD PLAYER UX: proper recovery menu always shown on death,
+ *   dead players never soft-locked, /start detects death state
+ * - BOSS WORLD EFFECTS: active bosses modify reward multipliers,
+ *   chaos gain, and market state while alive
+ * - FACTION WORLD FEEL: dominant faction visibly changes gameplay
+ *   messages and reward flavour text
+ * - WORLD REACTIVITY: chaos/market/faction state affect action
+ *   outcomes with short dynamic commentary lines
+ * - YODEL-BOT sarcastic one-liners added after actions
+ * - MENU AUTO-RETURN: dead players get recovery menu on counter
+ * - LIGHT ECONOMY: soft diminishing returns on stacked bonuses
+ * - ALL previous v2.3 fixes preserved intact
  *
  * =========================================================
  */
@@ -103,7 +41,7 @@ if (!process.env.BOT_TOKEN) {
 }
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-console.log("🌌 FOMO YODELVERSE ENGINE BOOTING...");
+console.log("🌌 FOMO YODLVERSE ENGINE BOOTING...");
 
 /* =========================================================
    CONFIG
@@ -126,9 +64,7 @@ const CONFIG = {
   MAX_CHAOS:           100,
   BROADCAST_LIMIT:     300,
   BROADCAST_DELAY_MS:  55,
-  // How many messages between automatic menu re-sends
   MSG_MENU_INTERVAL:   7,
-  // Energy costs per action — enforced
   ENERGY_COSTS: {
     event:  5,
     mine:   4,
@@ -303,18 +239,15 @@ bot.use(async (ctx, next) => {
 
 /* =========================================================
    MESSAGE COUNTER — auto-resend menu every N messages
-   NEW v2.3: Tracks per-user message count in private chat.
-   Every MSG_MENU_INTERVAL messages, home menu is re-sent
-   so players never have to scroll up to find their buttons.
 ========================================================= */
 
-const MSG_COUNTER = {}; // userId → count since last menu send
+const MSG_COUNTER = {};
 
 function tickMessageCounter(userId) {
   MSG_COUNTER[userId] = (MSG_COUNTER[userId] || 0) + 1;
   if (MSG_COUNTER[userId] >= CONFIG.MSG_MENU_INTERVAL) {
     MSG_COUNTER[userId] = 0;
-    return true; // caller should re-send menu
+    return true;
   }
   return false;
 }
@@ -363,7 +296,7 @@ bot.use(async (ctx, next) => {
 `🌌 Welcome to FOMOYODLVERSE
 
 The chain has collapsed.
-Survivors now fight for credits, factions, and control of the Yodelverse.
+Survivors now fight for credits, factions, and control of the Yodlverse.
 
 Start your journey below.`,
       Markup.inlineKeyboard([
@@ -388,6 +321,48 @@ function checkDeath(ctx, user) {
   if (!user || !user.dead) return false;
   if (user.hp > 0) user.hp = 0;
   return true;
+}
+
+/* =========================================================
+   DEAD PLAYER RECOVERY MENU
+   NEW v2.4: Always show this when a dead player interacts.
+   Never let them reach a dead end with no buttons.
+========================================================= */
+
+function deadMenuText(u) {
+  const deathTime   = u.deathTime || now();
+  const elapsed     = now() - deathTime;
+  const cooldown    = REBIRTH_CONFIG ? REBIRTH_CONFIG.rebirthCooldown : 1000 * 60 * 10;
+  const remaining   = Math.max(0, Math.ceil((cooldown - elapsed) / 1000));
+  const rebirthLine = remaining > 0
+    ? `⏳ Rebirth available in: ${remaining}s`
+    : `✅ REBIRTH READY`;
+
+  return `💀 YOU HAVE BEEN ELIMINATED
+
+The Yodlverse did not survive contact with your portfolio.
+
+♻️ REBIRTH
+• Keeps 25% XP
+• Keeps prestige + bonuses
+• Start with ${CONFIG.START_CREDITS + 100} credits
+${rebirthLine}
+
+💥 RESPAWN (FULL RESET)
+• Deletes everything
+• Returns to absolute zero
+• Only if you truly want a clean slate`;
+}
+
+function deadMenuKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("♻️ REBIRTH",           "rebirth")],
+    [Markup.button.callback("💥 RESPAWN (RESET)",   "respawn_confirm_prompt")]
+  ]);
+}
+
+async function showDeadMenu(ctx, u) {
+  return reply(ctx, deadMenuText(u), deadMenuKeyboard());
 }
 
 /* =========================================================
@@ -420,7 +395,7 @@ function requireRegistered(user, ctx) {
 function spendEnergy(user, amount, ctx = null) {
   if (user.energy < amount) {
     if (ctx) reply(ctx,
-      `⚡ Not enough energy (need ${amount}, have ${user.energy}).\n\nBuy an Energy Cell at 🏪 MARKET or wait for regen.`
+      `⚡ Not enough energy (need ${amount}, have ${user.energy}).\n\nBuy an Energy Cell at 🏪 MARKET or wait for regen.\n\n_YODEL-BOT: "Touch grass. Your energy bar isn't the only thing depleted."_`
     );
     return false;
   }
@@ -503,7 +478,7 @@ function hubPrivateLink(userId, ctx) {
     ctx.callbackQuery?.message?.message_thread_id ||
     null;
   const token       = createSession(userId, topicId);
-  const botUsername = process.env.BOT_USERNAME || "FOMOYODELverseBot";
+  const botUsername = process.env.BOT_USERNAME || "FOMOYODLverseBot";
   return `https://t.me/${botUsername}?start=session_${token}`;
 }
 
@@ -543,13 +518,11 @@ function rebirthPlayer(user) {
 
 /* =========================================================
    HARD RESET (respawn path)
-   NEW v2.3: Full character wipe back to starting state.
-   Called only after double-confirmation.
 ========================================================= */
 
 function hardResetPlayer(user) {
-  const id   = user.id;
-  const name = user.name;
+  const id       = user.id;
+  const name     = user.name;
   const username = user.username;
   DB[id] = createUser(id);
   DB[id].name     = name;
@@ -561,12 +534,21 @@ function hardResetPlayer(user) {
    GAME DATA
 ========================================================= */
 
+// Full Star Wars satire character roster as requested
 const CHARACTERS = [
-  "R2D5",
-  "Darth Fader",
-  "Fan Solo",
+  "FOMO Yodl",
+  "LFG Skytalker",
+  "Fan SOLo",
+  "OBi FOMO-WannaBe",
   "Princess Liquidia",
-  "Jabba the Whale"
+  "ChewStacka",
+  "Web3PO",
+  "R2-DeFi",
+  "Admiral Growbar",
+  "Darth F.A.D.E.R.",
+  "Jabba the Whale",
+  "Discount Duco",
+  "Darth Scamious"
 ];
 
 const FACTIONS = ["HODL", "FOMO", "SCAM", "WHALE"];
@@ -577,6 +559,136 @@ const FACTION_BONUSES = {
   SCAM:  { mineBonus: 0,    warBonus: 0,    crimeBonus: 0.25, eventBonus: 0,    hackBonus: 0.20 },
   WHALE: { mineBonus: 0.10, warBonus: 0.10, crimeBonus: 0.10, eventBonus: 0.10, hackBonus: 0.10 }
 };
+
+/* =========================================================
+   FACTION WORLD FLAVOUR LINES
+   NEW v2.4: Short lines that fire when dominant faction
+   affects an action. Makes dominance feel real.
+========================================================= */
+
+const FACTION_FLAVOUR = {
+  HODL: [
+    "📈 HODL dominates. The market breathes slowly.",
+    "🧊 HODL discipline steadies the chain.",
+    "📊 Diamond hands control the flow today."
+  ],
+  FOMO: [
+    "🚀 FOMO surges. Everyone's buying highs.",
+    "📣 FOMO energy floods the sectors.",
+    "⚡ The crowd is unhinged. Perfect conditions."
+  ],
+  SCAM: [
+    "🎭 SCAM faction thrives in the shadows.",
+    "🕶 Someone's running a honeypot. Classic.",
+    "💀 Trust nobody. Especially yourself."
+  ],
+  WHALE: [
+    "🐋 Whales move markets. The rest follow.",
+    "💰 Deep wallets pull all the strings.",
+    "🌊 Liquidity shifts. WHALE dominates."
+  ]
+};
+
+function getFactionFlavour(faction) {
+  const dominant = getDominantFaction();
+  if (dominant && dominant === faction) {
+    const lines = FACTION_FLAVOUR[dominant];
+    return lines ? `\n_${rand(lines)}_` : "";
+  }
+  return "";
+}
+
+/* =========================================================
+   YODEL-BOT SARCASTIC COMMENTARY
+   NEW v2.4: Short one-liners added after actions to make
+   the world feel alive and reactive.
+========================================================= */
+
+const YODELBOT_LINES = {
+  win: [
+    "_YODEL-BOT: 'Congrats. You didn't lose everything. Yet.'_",
+    "_YODEL-BOT: 'Profit confirmed. Hubris incoming.'_",
+    "_YODEL-BOT: 'Number go up. Don't get used to it.'_",
+    "_YODEL-BOT: 'Well done. The chain acknowledges your greed.'_"
+  ],
+  lose: [
+    "_YODEL-BOT: 'Rekt. As predicted by everyone.'_",
+    "_YODEL-BOT: 'This is fine. Everything is fine.'_",
+    "_YODEL-BOT: 'Have you tried not losing?'_",
+    "_YODEL-BOT: 'Your ancestors are embarrassed.'_"
+  ],
+  chaos_high: [
+    "_YODEL-BOT: 'Chaos at ${c}. Pure entropy. Beautiful.'_",
+    "_YODEL-BOT: 'Markets unhinged. Ideal conditions for gambling.'_",
+    "_YODEL-BOT: 'Maximum chaos reached. Welcome home.'_"
+  ],
+  boss_active: [
+    "_YODEL-BOT: 'A boss walks the chain. Rewards are... complicated.'_",
+    "_YODEL-BOT: 'Boss event active. Good luck. You'll need it.'_"
+  ],
+  market_crash: [
+    "_YODEL-BOT: 'Market crashing. Who could have predicted this? Everyone.'_",
+    "_YODEL-BOT: 'Everything is down. Except your self-loathing.'_"
+  ]
+};
+
+function getYodelBot(type, chaosVal) {
+  const lines = YODELBOT_LINES[type];
+  if (!lines || !lines.length) return "";
+  let line = rand(lines);
+  if (chaosVal !== undefined) line = line.replace("${c}", chaosVal);
+  return `\n\n${line}`;
+}
+
+function contextualYodelBot(u, won) {
+  if (WORLD.chaos >= 70)              return getYodelBot("chaos_high", WORLD.chaos);
+  if (WORLD.marketState === "crashing") return getYodelBot("market_crash");
+  if (WORLD.boss?.active)             return getYodelBot("boss_active");
+  return won ? getYodelBot("win") : getYodelBot("lose");
+}
+
+/* =========================================================
+   BOSS WORLD EFFECTS
+   NEW v2.4: While a boss is active, it modifies the world.
+   Different boss tiers and names apply different pressures.
+========================================================= */
+
+function getBossWorldModifiers() {
+  if (!WORLD.boss || !WORLD.boss.active) return { rewardMult: 1.0, chaosAdd: 0, crimeBoost: 0, mineDebuff: 0 };
+
+  const tier = WORLD.boss.tier || 1;
+  const name = WORLD.boss.name || "";
+
+  // Tier-based base modifiers
+  const base = {
+    1: { rewardMult: 0.90, chaosAdd: 1, crimeBoost: 0.05, mineDebuff: 0.05 },
+    2: { rewardMult: 0.85, chaosAdd: 2, crimeBoost: 0.10, mineDebuff: 0.10 },
+    3: { rewardMult: 0.80, chaosAdd: 3, crimeBoost: 0.20, mineDebuff: 0.15 }
+  }[tier] || { rewardMult: 0.90, chaosAdd: 1, crimeBoost: 0.05, mineDebuff: 0.05 };
+
+  // Named modifiers — certain bosses have special effects
+  if (name.includes("LIQUIDATOR") || name.includes("PAPER HANDS")) {
+    base.mineDebuff += 0.10; // Mining harder
+  }
+  if (name.includes("PONZI") || name.includes("RUGPULL")) {
+    base.crimeBoost += 0.15; // Crime pays more
+  }
+  if (name.includes("FOMO GRIEVOUS") || name.includes("VOID LEVIATHAN")) {
+    base.chaosAdd += 2; // Extra chaos per action
+  }
+
+  return base;
+}
+
+function bossWorldLine() {
+  if (!WORLD.boss || !WORLD.boss.active) return "";
+  const mods = getBossWorldModifiers();
+  const lines = [];
+  if (mods.mineDebuff > 0)  lines.push(`⚠️ ${WORLD.boss.name} suppresses mining yields`);
+  if (mods.crimeBoost > 0)  lines.push(`🔥 ${WORLD.boss.name} fuels criminal activity`);
+  if (mods.chaosAdd > 0)    lines.push(`💀 Boss presence escalates chaos`);
+  return lines.length ? `\n${rand(lines)}` : "";
+}
 
 const EVENTS = [
   { title: "Whale Manipulation",  text: "Massive liquidity distortion detected.",    xp: 20, credits: 15, chaos: 2, risk: 0.30 },
@@ -599,7 +711,6 @@ const HACK_TARGETS = [
 
 /* =========================================================
    ITEM SYSTEM
-   v2.3: Star Wars crypto satire item names
 ========================================================= */
 
 const ITEMS = [
@@ -652,7 +763,6 @@ function rollDrop(activity, chaosBonus = 0) {
 
 /* =========================================================
    BOSS ROSTER
-   v2.3: Star Wars crypto satire names & lore
 ========================================================= */
 
 const BOSS_ROSTER = [
@@ -833,7 +943,10 @@ function broadcastFire(message) {
 ========================================================= */
 
 function addChaos(amount) {
-  WORLD.chaos = clamp(WORLD.chaos + amount, 1, CONFIG.MAX_CHAOS);
+  // Add boss chaos modifier
+  const bossMods = getBossWorldModifiers();
+  const totalAmount = amount + bossMods.chaosAdd * 0.1; // boss adds a small fraction per action
+  WORLD.chaos = clamp(WORLD.chaos + totalAmount, 1, CONFIG.MAX_CHAOS);
   if (WORLD.chaos >= CONFIG.CHAOS_BOSS_TRIGGER && (!WORLD.boss || !WORLD.boss.active)) {
     spawnBoss();
   }
@@ -864,11 +977,21 @@ function getDominanceBonus(userFaction) {
 }
 
 /* =========================================================
+   SOFT CAP HELPER — v2.4 light economy balancing
+   Prevents runaway stacking without punishing veterans.
+   Applies mild diminishing returns above certain thresholds.
+========================================================= */
+
+function softCapMultiplier(totalBonus) {
+  // totalBonus is the combined fraction (e.g. 0.50 = 50% bonus)
+  // Returns a dampened version to prevent runaway scaling.
+  if (totalBonus <= 0.30) return totalBonus;
+  if (totalBonus <= 0.60) return 0.30 + (totalBonus - 0.30) * 0.7;
+  return 0.30 + 0.30 * 0.7 + (totalBonus - 0.60) * 0.4;
+}
+
+/* =========================================================
    BOSS SYSTEM
-   FIX v2.3: spawnBoss() now returns the boss object so callers
-   can verify it exists immediately after spawn without relying
-   on async timing. Boss action handler checks WORLD.boss after
-   spawn completes before attempting the attack.
 ========================================================= */
 
 let bossLock = false;
@@ -900,6 +1023,14 @@ function spawnBoss() {
   save();
   bossLock = false;
 
+  // Build world effect description for broadcast
+  const mods = getBossWorldModifiers();
+  const effectLines = [];
+  if (mods.mineDebuff > 0)  effectLines.push(`⛏ Mining yields reduced`);
+  if (mods.crimeBoost > 0)  effectLines.push(`🕶 Crime profits increased`);
+  if (mods.chaosAdd > 0)    effectLines.push(`🔥 Chaos escalating per action`);
+  const effectStr = effectLines.length ? `\n\n🌍 World Effects:\n${effectLines.join("\n")}` : "";
+
   broadcastFire(
 `🐋 WORLD BOSS SPAWNED — TIER ${template.tier}
 
@@ -907,12 +1038,12 @@ function spawnBoss() {
 "${template.lore}"
 
 ❤️ HP: ${hp}
-💰 Reward pool: ${template.reward} credits
+💰 Reward pool: ${template.reward} credits${effectStr}
 
 Press 🐋 BOSS to join the raid!`
   );
 
-  return WORLD.boss; // FIX v2.3: return boss so caller can verify
+  return WORLD.boss;
 }
 
 function checkBossTaunts() {
@@ -956,7 +1087,9 @@ function damageBoss(userId, dmg) {
 👹 ${bossName} has fallen.
 👥 ${parts} survivor${parts !== 1 ? "s" : ""} dealt the damage.
 💰 All participants earn bonus loot!
-🔥 Chaos recedes by ${tier * 3}`
+🔥 Chaos recedes by ${tier * 3}
+
+🌍 World effects from this boss have lifted.`
     );
 
     WORLD.chaos = clamp(WORLD.chaos - (tier * 3), 1, CONFIG.MAX_CHAOS);
@@ -1006,7 +1139,25 @@ function homeText(u) {
   const dominant    = getDominantFaction();
   const domLine     = dominant ? `👑 Dominant: ${dominant}` : "";
   const energyBar   = `${"█".repeat(Math.floor(u.energy / 10))}${"░".repeat(10 - Math.floor(u.energy / 10))}`;
-  return `🌌 FOMO YODELVERSE
+
+  // Boss world effect hint
+  const bossHint = WORLD.boss?.active
+    ? `\n⚔ BOSS EVENT: ${WORLD.boss.name} (HP: ${WORLD.boss.hp})`
+    : "";
+
+  // Faction dominance hint
+  let factionHint = "";
+  if (dominant) {
+    const hints = {
+      HODL:  "📈 HODL era: markets stable, miners profit",
+      FOMO:  "🚀 FOMO era: war & events pay more",
+      SCAM:  "🕶 SCAM era: crime & hacks boosted",
+      WHALE: "🐋 WHALE era: all sectors slightly elevated"
+    };
+    factionHint = `\n${hints[dominant] || ""}`;
+  }
+
+  return `🌌 FOMO YODLVERSE
 
 👤 ${u.name}
 🧬 ${u.character || "UNSET"}
@@ -1018,8 +1169,7 @@ function homeText(u) {
 ⚡ Energy: ${u.energy}/${CONFIG.MAX_ENERGY} [${energyBar}]
 
 🔥 Chaos: ${WORLD.chaos}
-🌍 Market: ${WORLD.marketState}
-🐋 Boss: ${WORLD.boss?.active ? WORLD.boss.name + " ❤️" + WORLD.boss.hp : "None"}
+🌍 Market: ${WORLD.marketState}${bossHint}${factionHint}
 ${domLine}`.trim();
 }
 
@@ -1032,10 +1182,9 @@ async function home(ctx, u) {
     return reply(ctx, "❌ User not found. Please restart with /start.");
   }
 
+  // Dead player: always show recovery menu
   if (checkDeath(ctx, u)) {
-    return reply(ctx,
-      "💀 You have been eliminated from the Yodelverse.\n\nUse /respawn or press ♻️ REBIRTH to return."
-    );
+    return showDeadMenu(ctx, u);
   }
 
   const session  = resolveSessionFromCtx(ctx);
@@ -1043,30 +1192,37 @@ async function home(ctx, u) {
 
   if (!canEnter) {
     return reply(ctx,
-      "🚫 Session not active.\n\nUse /start or /game to enter the Yodelverse."
+      "🚫 Session not active.\n\nUse /start or /game to enter the Yodlverse."
     );
   }
 
   applyEnergyRegen(u);
   save();
 
-  resetMessageCounter(u.id); // reset counter when menu explicitly shown
+  resetMessageCounter(u.id);
 
   return reply(ctx, homeText(u), homeMenu(u.id, ctx));
 }
 
 /* =========================================================
    AUTO MENU RESEND MIDDLEWARE
-   NEW v2.3: After every reply in private chat, tick the counter.
-   When it reaches MSG_MENU_INTERVAL, automatically re-send
-   the home menu so it's always within reach.
-   Wrapped to never block or throw.
 ========================================================= */
 
 async function maybeResendMenu(ctx, user) {
   try {
     if (!isPrivateChat(ctx)) return;
-    if (!user || !user.registered || user.dead) return;
+    if (!user) return;
+
+    // Dead players get recovery menu instead of action menu
+    if (user.dead) {
+      if (tickMessageCounter(user.id)) {
+        await showDeadMenu(ctx, user);
+      }
+      return;
+    }
+
+    if (!user.registered) return;
+
     if (tickMessageCounter(user.id)) {
       await reply(ctx, "🕹 Quick actions:", homeMenu(user.id, ctx));
     }
@@ -1104,15 +1260,12 @@ function marketPrice(basePrice) {
 
 /* =========================================================
    DEATH COMMANDS
-   FIX v2.3: /respawn now shows ARE YOU SURE confirmation.
-   Confirming does a full hard reset (back to starting state).
-   Rebirth remains the soft revival path (keeps some progress).
 ========================================================= */
 
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (!isDead(u)) return reply(ctx,
-    "✅ You are not dead.\n\nNo need to respawn — you are still in the Yodelverse."
+    "✅ You are not dead.\n\nNo need to respawn — you are still in the Yodlverse."
   );
 
   return reply(ctx,
@@ -1134,6 +1287,30 @@ Are you sure you want to full reset?`,
   );
 });
 
+bot.action("respawn_confirm_prompt", async (ctx) => {
+  await ack(ctx);
+  const u = getUser(ctx.from.id, ctx);
+  if (!isDead(u)) return reply(ctx, "✅ You are not dead. No reset needed.");
+
+  return reply(ctx,
+`⚠️ RESPAWN — FULL RESET
+
+This will DELETE your character permanently:
+• All XP, credits, items, reputation lost
+• Return to starting state (${CONFIG.START_CREDITS} credits, no faction)
+
+♻️ REBIRTH is available for a softer revival (keeps 25% XP + prestige).
+
+Are you sure?`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("💀 YES — DELETE EVERYTHING", "confirm_hardreset"),
+        Markup.button.callback("❌ NO — REBIRTH INSTEAD",    "cancel_hardreset")
+      ]
+    ])
+  );
+});
+
 bot.action("confirm_hardreset", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
@@ -1146,7 +1323,7 @@ bot.action("confirm_hardreset", async (ctx) => {
   await reply(ctx,
 `💥 CHARACTER DELETED
 
-${name} has been erased from the Yodelverse.
+${name} has been erased from the Yodlverse.
 
 You start fresh with ${CONFIG.START_CREDITS} credits.
 Use /start to create a new character.`
@@ -1156,17 +1333,10 @@ Use /start to create a new character.`
 bot.action("cancel_hardreset", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  await reply(ctx,
-    "✅ Reset cancelled.\n\nUse ♻️ REBIRTH for a softer revival that keeps your prestige."
-  );
   if (isDead(u)) {
-    return reply(ctx,
-      "♻️ Press REBIRTH below to return with 25% XP + prestige bonus.",
-      Markup.inlineKeyboard([
-        [Markup.button.callback("♻️ REBIRTH", "rebirth")]
-      ])
-    );
+    return showDeadMenu(ctx, u);
   }
+  return reply(ctx, "✅ Reset cancelled.");
 });
 
 bot.action("rebirth", async (ctx) => {
@@ -1184,21 +1354,37 @@ bot.action("rebirth", async (ctx) => {
     const seconds   = Math.max(0, Math.ceil(
       (REBIRTH_CONFIG.rebirthCooldown - (now() - deathTime)) / 1000
     ));
-    return reply(ctx, `⏳ Rebirth not ready yet.\n\nTry again in ${seconds}s`);
+    return reply(ctx,
+`⏳ Rebirth not ready yet.
+
+Try again in ${seconds}s
+
+While you wait:
+• The Yodlverse continues without you
+• Bosses are roaming
+• Faction wars escalate`,
+      Markup.inlineKeyboard([
+        [Markup.button.callback("🔄 Check Again", "rebirth")],
+        [Markup.button.callback("💥 RESPAWN (RESET)", "respawn_confirm_prompt")]
+      ])
+    );
   }
 
   save();
   await reply(ctx,
 `♻️ REBIRTH COMPLETE
 
-You have returned to the Yodelverse.
-Prestige: ${u.prestige} | XP retained: ${u.xp}`
+You have returned to the Yodlverse.
+Prestige: ${u.prestige} | XP retained: ${u.xp}
+
+_YODEL-BOT: "The chain welcomes you back. It will destroy you again shortly."_`
   );
   return home(ctx, u);
 });
 
 bot.command("status", (ctx) => {
   const users = Object.keys(DB).length;
+  const bossEffects = WORLD.boss?.active ? bossWorldLine() : "None";
   return reply(ctx,
 `🌌 SERVER STATUS
 
@@ -1207,6 +1393,7 @@ bot.command("status", (ctx) => {
 🌍 Market: ${WORLD.marketState}
 🐋 Boss: ${WORLD.boss?.active ? WORLD.boss.name + " HP:" + WORLD.boss.hp : "NONE"}
 👑 Dominant Faction: ${getDominantFaction() || "None"}
+🌍 Boss World Effects: ${bossEffects || "None"}
 💾 Save: ${dirty ? "PENDING" : "SYNCED"}`
   );
 });
@@ -1218,7 +1405,7 @@ bot.command("status", (ctx) => {
 bot.action(/char_(.+)/, async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
 
   u.character = ctx.match[1];
@@ -1243,7 +1430,7 @@ bot.action(/faction_(.+)/, async (ctx) => {
   if (!FACTIONS.includes(faction)) return;
 
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!u || u.dead) return;
 
@@ -1266,11 +1453,13 @@ function profileText(u) {
     : u.wanted ? "🚨 WANTED" : "Clean";
   const invPower   = u.inventory.reduce((s, i) => s + (i?.power || 0), 0);
 
+  const domTag = isDominant ? ` 👑 (Dominant +10%)` : "";
+
   return `📊 PROFILE
 
 👤 ${u.name}  (@${u.username || "—"})
 🧬 ${u.character}
-⚔ ${u.faction}${isDominant ? " 👑" : ""}
+⚔ ${u.faction}${domTag}
 
 ⭐ Level: ${level(u.xp)}  XP: ${u.xp}
 💰 Credits: ${u.credits}
@@ -1298,7 +1487,7 @@ bot.command("profile", (ctx) => {
 bot.action("profile", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   await reply(ctx, profileText(u));
   await maybeResendMenu(ctx, u);
@@ -1311,7 +1500,7 @@ bot.action("profile", async (ctx) => {
 bot.action("event", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "event")) return reply(ctx, "⏳ Event cooldown active");
 
@@ -1322,7 +1511,9 @@ bot.action("event", async (ctx) => {
   const factionBonus = FACTION_BONUSES[u.faction]?.eventBonus || 0;
   const domBonus     = getDominanceBonus(u.faction);
   const repDiscount  = Math.min(0.10, u.reputation * 0.005);
-  const risk         = Math.min(0.90, e.risk + WORLD.chaos * 0.012 - factionBonus * 0.5 - repDiscount);
+  const rawBonus     = factionBonus + domBonus;
+  const cappedBonus  = softCapMultiplier(rawBonus);
+  const risk         = Math.min(0.90, e.risk + WORLD.chaos * 0.012 - cappedBonus * 0.5 - repDiscount);
 
   if (Math.random() < risk) {
     const loss   = 15 + Math.floor(Math.random() * 30);
@@ -1333,9 +1524,7 @@ bot.action("event", async (ctx) => {
     if (u.hp <= 0) { u.dead = true; u.deathTime = now(); }
     addChaos(1);
     save();
-    if (checkDeath(ctx, u)) return reply(ctx,
-      `💀 EVENT KILLED YOU\n\n${e.title}\n-${loss} Credits, -${damage} HP\n\nUse /respawn to return.`
-    );
+    if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
     await reply(ctx,
 `💥 EVENT FAILED
 
@@ -1343,7 +1532,7 @@ ${e.title}
 -${loss} Credits  -${damage} HP
 ⚡ Energy: ${u.energy}
 
-🔥 Chaos increased`
+🔥 Chaos increased${contextualYodelBot(u, false)}`
     );
     await maybeResendMenu(ctx, u);
     return;
@@ -1351,8 +1540,8 @@ ${e.title}
 
   const mktMult  = WORLD.marketState === "bullish" ? 1.25
                  : WORLD.marketState === "crashing" ? 0.75 : 1.0;
-  const xpGain   = Math.floor(e.xp      * (1 + factionBonus + domBonus));
-  const credGain = Math.floor(e.credits * mktMult * (1 + factionBonus + domBonus));
+  const xpGain   = Math.floor(e.xp      * (1 + cappedBonus));
+  const credGain = Math.floor(e.credits * mktMult * (1 + cappedBonus));
 
   u.xp      += xpGain;
   u.credits += credGain;
@@ -1360,7 +1549,8 @@ ${e.title}
   addFactionPower(u.faction, xpGain);
   addChaos(e.chaos);
 
-  const drop = tryDrop(u, "event");
+  const drop        = tryDrop(u, "event");
+  const factionLine = getFactionFlavour(u.faction);
   save();
 
   await reply(ctx,
@@ -1369,7 +1559,7 @@ ${e.title}
 ${e.text}
 +${xpGain} XP  +${credGain} Credits
 ⚡ Energy: ${u.energy}
-🔥 Chaos: ${WORLD.chaos}${drop}`
+🔥 Chaos: ${WORLD.chaos}${factionLine}${drop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
@@ -1381,14 +1571,15 @@ ${e.text}
 bot.action("mine", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "mine")) return reply(ctx, "⏳ Mining cooldown active");
 
   applyEnergyRegen(u);
   if (!spendEnergy(u, CONFIG.ENERGY_COSTS.mine, ctx)) return;
 
-  const caveInRisk = Math.max(0.02, 0.12 + WORLD.chaos * 0.005 - u.miningLevel * 0.01);
+  const bossMods    = getBossWorldModifiers();
+  const caveInRisk  = Math.max(0.02, 0.12 + WORLD.chaos * 0.005 - u.miningLevel * 0.01);
 
   if (Math.random() < caveInRisk) {
     const damage = 10 + Math.floor(Math.random() * 15);
@@ -1396,16 +1587,14 @@ bot.action("mine", async (ctx) => {
     u.losses     = (u.losses || 0) + 1;
     if (u.hp <= 0) { u.dead = true; u.deathTime = now(); }
     save();
-    if (checkDeath(ctx, u)) return reply(ctx,
-      `💀 CAVE-IN — You were killed in the mines.\n\nUse /respawn to return.`
-    );
+    if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
     await reply(ctx,
 `⛏ CAVE-IN!
 
 The tunnel collapsed. -${damage} HP
 
 HP: ${u.hp}/${CONFIG.MAX_HP}
-⚡ Energy: ${u.energy}`
+⚡ Energy: ${u.energy}${contextualYodelBot(u, false)}`
     );
     await maybeResendMenu(ctx, u);
     return;
@@ -1414,19 +1603,25 @@ HP: ${u.hp}/${CONFIG.MAX_HP}
   const factionBonus  = FACTION_BONUSES[u.faction]?.mineBonus || 0;
   const prestigeBonus = u.prestige * 0.05;
   const domBonus      = getDominanceBonus(u.faction);
+  const rawBonus      = factionBonus + prestigeBonus + domBonus;
+  const cappedBonus   = softCapMultiplier(rawBonus);
   const mktMult       = WORLD.marketState === "bullish" ? 1.2
                       : WORLD.marketState === "crashing" ? 0.8 : 1.0;
+  // Boss debuffs mining
+  const bossDebuff    = 1 - bossMods.mineDebuff;
 
   const levelScale = u.miningLevel + Math.floor(u.miningLevel * u.miningLevel * 0.1);
   const gain       = Math.floor(
     (15 + Math.floor(Math.random() * 35) + levelScale * 4) *
-    mktMult * (1 + factionBonus + prestigeBonus + domBonus)
+    mktMult * bossDebuff * (1 + cappedBonus)
   );
 
   u.credits += gain;
   u.xp      += 5 + u.miningLevel;
 
-  const drop = tryDrop(u, "mine");
+  const drop        = tryDrop(u, "mine");
+  const factionLine = getFactionFlavour(u.faction);
+  const bossLine    = bossMods.mineDebuff > 0 ? `\n⚠️ Boss suppressing yields (${Math.round(bossMods.mineDebuff * 100)}% debuff)` : "";
   save();
 
   await reply(ctx,
@@ -1434,7 +1629,7 @@ HP: ${u.hp}/${CONFIG.MAX_HP}
 
 +${gain} Credits  +${5 + u.miningLevel} XP
 ⛏ Mining Level: ${u.miningLevel}
-⚡ Energy: ${u.energy}${factionBonus > 0 ? "\n⚔ HODL Bonus applied" : ""}${drop}`
+⚡ Energy: ${u.energy}${factionBonus > 0 ? "\n📈 HODL Bonus applied" : ""}${bossLine}${factionLine}${drop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
@@ -1446,7 +1641,7 @@ HP: ${u.hp}/${CONFIG.MAX_HP}
 bot.action("crime", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "crime")) return reply(ctx, "⏳ Crime cooldown active");
 
@@ -1457,7 +1652,9 @@ bot.action("crime", async (ctx) => {
   const domBonus     = getDominanceBonus(u.faction);
   const repDiscount  = Math.min(0.15, u.reputation * 0.008);
   const wantedRisk   = (u.wantedLevel || 0) * 0.05;
-  const failChance   = Math.max(0.10, 0.48 - factionBonus - repDiscount + wantedRisk);
+  const rawBonus     = factionBonus + domBonus;
+  const cappedBonus  = softCapMultiplier(rawBonus);
+  const failChance   = Math.max(0.10, 0.48 - cappedBonus - repDiscount + wantedRisk);
 
   if (Math.random() < failChance) {
     const loss   = 20 + Math.floor(Math.random() * 40);
@@ -1469,24 +1666,24 @@ bot.action("crime", async (ctx) => {
     u.losses     = (u.losses || 0) + 1;
     if (u.hp <= 0) { u.dead = true; u.deathTime = now(); }
     save();
-    if (checkDeath(ctx, u)) return reply(ctx,
-      `💀 ELIMINATED BY AUTHORITIES\n\n-${loss} Credits, -${damage} HP\n\nUse /respawn to return.`
-    );
+    if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
     await reply(ctx,
 `🚔 CRIME FAILED
 
 -${loss} Credits  -${damage} HP
 ⚡ Energy: ${u.energy}
-🚨 Wanted Level: ${u.wantedLevel}`
+🚨 Wanted Level: ${u.wantedLevel}${contextualYodelBot(u, false)}`
     );
     await maybeResendMenu(ctx, u);
     return;
   }
 
+  const bossMods    = getBossWorldModifiers();
   const wantedBonus = 1 + (u.wantedLevel || 0) * 0.20;
   const mktMult     = WORLD.marketState === "bullish" ? 1.15 : 1.0;
+  const bossBoost   = 1 + bossMods.crimeBoost;
   const gain        = Math.floor(
-    (45 + Math.floor(Math.random() * 95)) * wantedBonus * mktMult * (1 + factionBonus + domBonus)
+    (45 + Math.floor(Math.random() * 95)) * wantedBonus * mktMult * bossBoost * (1 + cappedBonus)
   );
   const repGain     = 1 + (u.wantedLevel || 0);
 
@@ -1497,7 +1694,10 @@ bot.action("crime", async (ctx) => {
   if (u.wantedLevel === 0) u.wanted = false;
   addChaos(1);
 
-  const drop = tryDrop(u, "crime");
+  const drop        = tryDrop(u, "crime");
+  const factionLine = getFactionFlavour(u.faction);
+  const bossLine    = bossMods.crimeBoost > 0
+    ? `\n🔥 Boss chaos boosted crime profits!` : "";
   save();
 
   await reply(ctx,
@@ -1505,7 +1705,7 @@ bot.action("crime", async (ctx) => {
 
 +${gain} Credits  +${repGain} Reputation
 ⚡ Energy: ${u.energy}
-🌟 Total Rep: ${u.reputation}${wantedBonus > 1 ? `\n⚡ Wanted bonus applied!` : ""}${drop}`
+🌟 Total Rep: ${u.reputation}${wantedBonus > 1 ? `\n⚡ Wanted bonus applied!` : ""}${bossLine}${factionLine}${drop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
@@ -1517,7 +1717,7 @@ bot.action("crime", async (ctx) => {
 bot.action("war", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "war", 8000)) return reply(ctx, "⏳ War cooldown active");
 
@@ -1527,6 +1727,8 @@ bot.action("war", async (ctx) => {
   const factionBonus  = FACTION_BONUSES[u.faction]?.warBonus || 0;
   const prestigeBonus = u.prestige * 0.03;
   const domBonus      = getDominanceBonus(u.faction);
+  const rawBonus      = factionBonus + prestigeBonus + domBonus;
+  const cappedBonus   = softCapMultiplier(rawBonus);
   const chaosRisk     = 1 + WORLD.chaos * 0.008;
   const streakMult    = 1 + Math.min(5, u.warStreak || 0) * 0.10;
 
@@ -1535,7 +1737,7 @@ bot.action("war", async (ctx) => {
   const baseReward = isElite
     ? 80 + Math.floor(Math.random() * 120)
     : 20 + Math.floor(Math.random() * 50);
-  const reward = Math.floor(baseReward * streakMult * (1 + factionBonus + prestigeBonus + domBonus));
+  const reward = Math.floor(baseReward * streakMult * (1 + cappedBonus));
   const damage = Math.floor((isElite ? 25 : 10) + Math.floor(Math.random() * (isElite ? 35 : 20))) * chaosRisk;
 
   u.xp = u.xp + reward;
@@ -1550,9 +1752,7 @@ bot.action("war", async (ctx) => {
     addChaos(2);
     tryDrop(u, "war");
     save();
-    return reply(ctx,
-      `💀 KILLED IN BATTLE\n\n+${reward} XP before death.\nWar streak lost.\n\nUse /respawn to return.`
-    );
+    return showDeadMenu(ctx, u);
   }
 
   u.warStreak = (u.warStreak || 0) + 1;
@@ -1562,6 +1762,7 @@ bot.action("war", async (ctx) => {
 
   const drop       = tryDrop(u, "war");
   const eliteDrop  = isElite ? tryDrop(u, "boss") : "";
+  const factionLine = getFactionFlavour(u.faction);
   save();
 
   const streakLine = u.warStreak > 1
@@ -1574,7 +1775,7 @@ bot.action("war", async (ctx) => {
 ${u.name} fought for ${u.faction}
 +${reward} XP  -${damage} HP
 ⚡ Energy: ${u.energy}
-🔥 Chaos: ${WORLD.chaos}${eliteLine}${streakLine}${drop}${eliteDrop}`
+🔥 Chaos: ${WORLD.chaos}${eliteLine}${streakLine}${factionLine}${drop}${eliteDrop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
@@ -1587,7 +1788,7 @@ bot.action("hack", async (ctx) => {
   await ack(ctx);
   if (!requirePrivate(ctx)) return;
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   if (!cooldownOk(u, "hack", 9000)) return reply(ctx, "⏳ Hacking cooldown active");
 
@@ -1606,7 +1807,9 @@ bot.action("hack", async (ctx) => {
   const factionBonus = FACTION_BONUSES[u.faction]?.hackBonus || 0;
   const domBonus     = getDominanceBonus(u.faction);
   const repDiscount  = Math.min(0.12, u.reputation * 0.006);
-  const risk         = Math.max(0.10, target.risk - factionBonus - repDiscount + WORLD.chaos * 0.004);
+  const rawBonus     = factionBonus + domBonus;
+  const cappedBonus  = softCapMultiplier(rawBonus);
+  const risk         = Math.max(0.10, target.risk - cappedBonus - repDiscount + WORLD.chaos * 0.004);
 
   if (Math.random() < risk) {
     const damage = 10 + Math.floor(Math.random() * 20);
@@ -1617,24 +1820,22 @@ bot.action("hack", async (ctx) => {
     if (u.hp <= 0) { u.dead = true; u.deathTime = now(); }
     addChaos(1);
     save();
-    if (checkDeath(ctx, u)) return reply(ctx,
-      `💀 TRACED AND ELIMINATED\n\nCounterattack killed you.\n\nUse /respawn to return.`
-    );
+    if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
     await reply(ctx,
 `🚫 HACK FAILED — ${target.name}
 
 Intrusion detected. Counterattack incoming.
 -${damage} HP  -${loss} Credits
 ⚡ Energy: ${u.energy}
-🔥 Chaos ticked up`
+🔥 Chaos ticked up${contextualYodelBot(u, false)}`
     );
     await maybeResendMenu(ctx, u);
     return;
   }
 
   const mktMult  = WORLD.marketState === "bullish" ? 1.15 : 1.0;
-  const xpGain   = Math.floor(target.xp      * (1 + factionBonus + domBonus));
-  const credGain = Math.floor(target.credits * mktMult * (1 + factionBonus + domBonus));
+  const xpGain   = Math.floor(target.xp      * (1 + cappedBonus));
+  const credGain = Math.floor(target.credits * mktMult * (1 + cappedBonus));
 
   u.xp         += xpGain;
   u.credits    += credGain;
@@ -1643,7 +1844,8 @@ Intrusion detected. Counterattack incoming.
   addFactionPower(u.faction, xpGain);
   addChaos(target.chaos);
 
-  const drop = tryDrop(u, "hack");
+  const drop        = tryDrop(u, "hack");
+  const factionLine = getFactionFlavour(u.faction);
   save();
 
   await reply(ctx,
@@ -1652,27 +1854,21 @@ Intrusion detected. Counterattack incoming.
 +${xpGain} XP  +${credGain} Credits  +1 Rep
 💻 Hacking Level: ${u.hackingLevel}
 ⚡ Energy: ${u.energy}
-🔥 Chaos: ${WORLD.chaos}${drop}`
+🔥 Chaos: ${WORLD.chaos}${factionLine}${drop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    BOSS
-   FIX v2.3: If no boss is active, spawnBoss() is called and
-   its return value is checked directly. Previously the handler
-   checked WORLD.boss after an await gap where it could still
-   be null if the spawn hadn't completed. Now spawn is sync
-   and the result is verified before proceeding with the attack.
 ========================================================= */
 
 bot.action("boss", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
 
-  // FIX v2.3: capture spawn result directly — no async gap
   if (!WORLD.boss || !WORLD.boss.active) {
     const spawned = spawnBoss();
     if (!spawned) {
@@ -1680,7 +1876,6 @@ bot.action("boss", async (ctx) => {
     }
   }
 
-  // Verify boss is genuinely active before attacking
   if (!WORLD.boss || !WORLD.boss.active) {
     return reply(ctx, "⚠️ Boss is not active right now. Check back soon!");
   }
@@ -1709,9 +1904,7 @@ bot.action("boss", async (ctx) => {
   const drop = tryDrop(u, "boss");
   save();
 
-  if (checkDeath(ctx, u)) return reply(ctx,
-    `💀 THE BOSS DESTROYED YOU\n\nYou dealt ${dmg} damage before falling.\n\nUse /respawn to return.`
-  );
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
 
   u.wins = (u.wins || 0) + 1;
   save();
@@ -1728,16 +1921,13 @@ bot.action("boss", async (ctx) => {
 💥 Damage dealt: ${dmg}
 -${damage} HP received
 ⚡ Energy: ${u.energy}
-${bossLine}${drop}`
+${bossLine}${drop}${contextualYodelBot(u, true)}`
   );
   await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    INVENTORY
-   FIX v2.3: Inline USE and SELL buttons on each item.
-   /use N and /sell N commands still work as fallback.
-   Pagination added for large inventories (10 items per page).
 ========================================================= */
 
 const STARS = { common: "⚪", rare: "🔵", epic: "🟣", legendary: "🟡" };
@@ -1785,7 +1975,6 @@ function inventoryPage(u, page = 0) {
     ]);
   });
 
-  // Pagination buttons
   const navRow = [];
   if (page > 0)               navRow.push(Markup.button.callback("◀ PREV", `inv_page_${page - 1}`));
   if (page < totalPages - 1)  navRow.push(Markup.button.callback("▶ NEXT", `inv_page_${page + 1}`));
@@ -1797,7 +1986,7 @@ function inventoryPage(u, page = 0) {
 bot.action("inventory", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
 
   const { text, keyboard } = inventoryPage(u, 0);
@@ -1805,7 +1994,6 @@ bot.action("inventory", async (ctx) => {
   await maybeResendMenu(ctx, u);
 });
 
-// Inventory pagination
 bot.action(/inv_page_(\d+)/, async (ctx) => {
   await ack(ctx);
   const u    = getUser(ctx.from.id, ctx);
@@ -1815,7 +2003,6 @@ bot.action(/inv_page_(\d+)/, async (ctx) => {
   await reply(ctx, text, keyboard || {});
 });
 
-// Inline USE button
 bot.action(/inv_use_(\d+)/, async (ctx) => {
   await ack(ctx);
   const u   = getUser(ctx.from.id, ctx);
@@ -1848,7 +2035,6 @@ bot.action(/inv_use_(\d+)/, async (ctx) => {
   );
 });
 
-// Inline SELL button
 bot.action(/inv_sell_(\d+)/, async (ctx) => {
   await ack(ctx);
   const u   = getUser(ctx.from.id, ctx);
@@ -1874,7 +2060,6 @@ bot.action(/inv_sell_(\d+)/, async (ctx) => {
   );
 });
 
-// Legacy /use command (still works)
 bot.command("use", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
@@ -1910,7 +2095,6 @@ bot.command("use", async (ctx) => {
   );
 });
 
-// Legacy /sell command (still works)
 bot.command("sell", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
@@ -1946,7 +2130,7 @@ bot.command("sell", async (ctx) => {
 bot.action("market", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
 
   const energyPrice  = marketPrice(50);
@@ -1955,11 +2139,15 @@ bot.action("market", async (ctx) => {
   const homePrice    = marketPrice(500);
   const cyberdeckPrc = marketPrice(200);
 
+  // Market commentary from dominant faction
+  const dominant = getDominantFaction();
+  const marketComment = dominant ? rand(FACTION_FLAVOUR[dominant] || []) : "";
+
   await reply(ctx,
 `🏪 BLACK MARKET
 
 Market: ${WORLD.marketState.toUpperCase()} 🔥 Chaos: ${WORLD.chaos}
-
+${marketComment ? `\n_${marketComment}_\n` : ""}
 ⚡ Energy Cell       — ${energyPrice} credits
 🛡 Nano Armor        — ${armorPrice} credits
 ⛏ Quantum Drill     — ${drillPrice} credits
@@ -1981,7 +2169,7 @@ Market: ${WORLD.marketState.toUpperCase()} 🔥 Chaos: ${WORLD.chaos}
 bot.action("buy_energy", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   const price = marketPrice(50);
   if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
@@ -1994,7 +2182,7 @@ bot.action("buy_energy", async (ctx) => {
 bot.action("buy_armor", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   const price = marketPrice(100);
   if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
@@ -2007,7 +2195,7 @@ bot.action("buy_armor", async (ctx) => {
 bot.action("buy_drill", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   const price = marketPrice(250);
   if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
@@ -2020,7 +2208,7 @@ bot.action("buy_drill", async (ctx) => {
 bot.action("buy_cyberdeck", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   const price = marketPrice(200);
   if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
@@ -2033,7 +2221,7 @@ bot.action("buy_cyberdeck", async (ctx) => {
 bot.action("buy_home", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
   const price = marketPrice(500);
   if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
@@ -2050,7 +2238,7 @@ bot.action("buy_home", async (ctx) => {
 bot.action("daily", async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   if (!requireRegistered(u, ctx)) return;
 
   if (now() - u.lastDaily < CONFIG.DAILY_COOLDOWN) {
@@ -2089,6 +2277,13 @@ bot.action("daily", async (ctx) => {
   u.hp       = clamp(u.hp + hpGain, 0, CONFIG.MAX_HP);
   u.energy   = clamp(u.energy + 10, 0, CONFIG.MAX_ENERGY);
 
+  // World state hint on daily
+  const worldHint = WORLD.boss?.active
+    ? `\n⚠️ Active boss: ${WORLD.boss.name} — join the raid!`
+    : WORLD.chaos >= 50
+    ? `\n🔥 High chaos detected — risky but rewarding out there`
+    : "";
+
   save();
 
   const streakLine   = streak > 1 ? `\n🔥 Streak: Day ${streak} (+${streakBonus * 20} credits)` : "";
@@ -2100,7 +2295,7 @@ bot.action("daily", async (ctx) => {
 +${credGain} Credits
 +${xpGain} XP
 +${hpGain} HP
-+10 Energy restored${streakLine}${prestigeLine}
++10 Energy restored${streakLine}${prestigeLine}${worldHint}
 
 Come back tomorrow to keep your streak!`
   );
@@ -2129,6 +2324,7 @@ function leaderboardText() {
 
   msg += `\n\n🔥 Chaos: ${WORLD.chaos}`;
   msg += `\n🌍 Market: ${WORLD.marketState}`;
+  if (WORLD.boss?.active) msg += `\n🐋 Boss Active: ${WORLD.boss.name} HP:${WORLD.boss.hp}`;
   return msg;
 }
 
@@ -2170,9 +2366,9 @@ bot.command("bulletin", (ctx) => {
    MENU COMMAND
 ========================================================= */
 
-bot.command("menu", (ctx) => {
+bot.command("menu", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   return home(ctx, u);
 });
 
@@ -2247,14 +2443,21 @@ setInterval(() => {
     worldEventLock = true;
     addChaos(1);
 
-    const eventMsg = rand([
+    const dominant = getDominantFaction();
+    const factionEvent = dominant ? rand([
+      `👑 ${dominant} faction tightens its grip on the chain.`,
+      `⚔ ${dominant} operatives spotted across all sectors.`,
+      `📊 ${dominant} dominance reshaping market conditions.`
+    ]) : null;
+
+    const eventMsg = factionEvent || rand([
       "🌌 Market instability detected.",
       "📉 A major token collapsed.",
       "🐋 Whale fleets moving through sectors.",
       "⚠ Illegal mining activity rising.",
       "💀 Shadow hackers breached the chain.",
       "🔥 Flash crash detected. Chaos rising.",
-      "🛸 Unknown entity entered the Yodelverse.",
+      "🛸 Unknown entity entered the Yodlverse.",
       "⚡ Power grid fluctuations detected across sectors.",
       "🔐 Anonymous hacker leaked exchange wallet keys.",
       "🧬 Faction insurgents spotted at the border."
@@ -2298,25 +2501,28 @@ bot.on("message", async (ctx) => {
 
     const deepLink = hubPrivateLink(ctx.from.id, ctx);
     return reply(ctx,
-      "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
+      "🌌 FOMO YODLVERSE\n\nTap below to enter your private game session:",
       Markup.inlineKeyboard([
-        [Markup.button.url("🎮 ENTER THE YODELVERSE", deepLink)]
+        [Markup.button.url("🎮 ENTER THE YODLVERSE", deepLink)]
       ])
     );
   }
 
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+
+  // Dead player gets recovery menu
+  if (checkDeath(ctx, u)) {
+    return showDeadMenu(ctx, u);
+  }
 
   const isEntryCommand = text.startsWith("/game") || text.startsWith("/start");
   if (!isEntryCommand) {
     await reply(ctx,
-      "🌌 FOMO YODELVERSE\n\nUse /start or /game to enter.",
+      "🌌 FOMO YODLVERSE\n\nUse /start or /game to enter.",
       Markup.inlineKeyboard([
         [Markup.button.callback("🚀 START", "start_game")]
       ])
     );
-    // Tick counter on free-text messages too
     if (u.registered && tickMessageCounter(u.id)) {
       await reply(ctx, "🕹 Quick actions:", homeMenu(u.id, ctx));
     }
@@ -2334,18 +2540,24 @@ bot.start(async (ctx) => {
 
     if (session) {
       const u = getUser(ctx.from.id, ctx);
+
+      // Dead player: show recovery immediately
       if (checkDeath(ctx, u)) {
-        return reply(ctx, "💀 You are dead.\n\nUse /respawn to return to the Yodelverse.");
+        await reply(ctx,
+          `💀 Welcome back, ${u.name || "player"}. You are currently dead.`
+        );
+        return showDeadMenu(ctx, u);
       }
+
       if (!u.registered) {
         if (!u.character) u.character = rand(CHARACTERS);
         if (!u.faction)   u.faction   = rand(FACTIONS);
         u.registered = true;
         save();
-        broadcastFire(`🌌 ${u.name} joined ${u.faction}`);
+        broadcastFire(`🌌 ${u.name} joined faction ${u.faction}`);
         addBulletin(`${u.name} joined faction ${u.faction}`);
         await reply(ctx,
-`🌌 Welcome to the FOMO YODELVERSE, ${u.name}!
+`🌌 Welcome to the FOMO YODLVERSE, ${u.name}!
 
 🧬 Character: ${u.character}
 ⚔ Faction: ${u.faction}
@@ -2364,17 +2576,21 @@ The Force of the blockchain awaits.`
   if (ctx.chat?.type !== "private") {
     const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
     return reply(ctx,
-      "🌌 FOMO YODELVERSE\n\nUse /game in the group to get your private entry link.",
+      "🌌 FOMO YODLVERSE\n\nUse /game in the group to get your private entry link.",
       Markup.inlineKeyboard([
-        [Markup.button.url("🎮 ENTER THE YODELVERSE", `https://t.me/${botUsername}`)]
+        [Markup.button.url("🎮 ENTER THE YODLVERSE", `https://t.me/${botUsername}`)]
       ])
     );
   }
 
   const u = getUser(ctx.from.id, ctx);
 
+  // Dead player: always show recovery
   if (checkDeath(ctx, u)) {
-    return reply(ctx, "💀 You are dead.\n\nUse /respawn to return to the Yodelverse.");
+    await reply(ctx,
+      `💀 Welcome back, ${u.name || "player"}. The Yodlverse remembers your end.`
+    );
+    return showDeadMenu(ctx, u);
   }
 
   if (u.registered) {
@@ -2385,13 +2601,13 @@ The Force of the blockchain awaits.`
   }
 
   return reply(ctx,
-`🌌 FOMO YODELVERSE
+`🌌 FOMO YODLVERSE
 
 The Great Rugpull has destroyed civilization.
 The blockchain is a warzone of factions, whales, and Sith Lords.
 
 Your credits are all you have left.
-Press START to enter the Yodelverse.`,
+Press START to enter the Yodlverse.`,
     Markup.inlineKeyboard([
       [Markup.button.callback("🚀 START", "start_game")]
     ])
@@ -2407,15 +2623,18 @@ bot.command("game", async (ctx) => {
   if (ctx.chat?.type !== "private") {
     const deepLink = hubPrivateLink(ctx.from.id, ctx);
     return reply(ctx,
-      "🌌 FOMO YODELVERSE\n\nTap below to enter your private game session:",
+      "🌌 FOMO YODLVERSE\n\nTap below to enter your private game session:",
       Markup.inlineKeyboard([
-        [Markup.button.url("🎮 ENTER THE YODELVERSE", deepLink)]
+        [Markup.button.url("🎮 ENTER THE YODLVERSE", deepLink)]
       ])
     );
   }
 
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+
+  if (checkDeath(ctx, u)) {
+    return showDeadMenu(ctx, u);
+  }
 
   if (u.registered) {
     await reply(ctx,
@@ -2426,11 +2645,11 @@ bot.command("game", async (ctx) => {
 
   u._entryIntent = "game";
   return reply(ctx,
-`🌌 FOMO YODELVERSE
+`🌌 FOMO YODLVERSE
 
 The Great Rugpull has destroyed civilization.
 
-Press START to enter the Yodelverse.`,
+Press START to enter the Yodlverse.`,
     Markup.inlineKeyboard([
       [Markup.button.callback("🚀 START", "start_game")]
     ])
@@ -2446,7 +2665,10 @@ bot.action("start_game", async (ctx) => {
   if (ctx.chat?.type !== "private") return;
 
   const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
+
+  if (checkDeath(ctx, u)) {
+    return showDeadMenu(ctx, u);
+  }
 
   if (!u.registered) {
     if (!u.character) u.character = rand(CHARACTERS);
@@ -2457,7 +2679,7 @@ bot.action("start_game", async (ctx) => {
     broadcastFire(`🌌 ${u.name} joined ${u.faction}`);
     addBulletin(`${u.name} joined faction ${u.faction}`);
     await reply(ctx,
-`🌌 Welcome to the FOMO YODELVERSE, ${u.name}!
+`🌌 Welcome to the FOMO YODLVERSE, ${u.name}!
 
 🧬 Character: ${u.character}
 ⚔ Faction: ${u.faction}
@@ -2476,5 +2698,5 @@ May the blockchain be with you.`
 
 console.log("➡️ Launch call executed");
 bot.launch()
-  .then(() => console.log("🌌 FOMO YODELVERSE ONLINE"))
+  .then(() => console.log("🌌 FOMO YODLVERSE ONLINE"))
   .catch(err => console.error("❌ Launch error:", err));
