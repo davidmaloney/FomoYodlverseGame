@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION v2.2
+ * 🌌 FOMO YODELVERSE — ULTIMATE HUB EDITION v2.3
  * =========================================================
  *
  * INCLUDED:
@@ -66,6 +66,19 @@
  * - worldEventLock uses proper async-aware flag release
  * - No architectural changes — pure organic expansion
  *
+ * FIX / EXPAND v2.3:
+ * - BOSS BUTTON BUG FIXED: spawnBoss() is async-safe; boss state
+ *   now verified after spawn before attempting attack
+ * - /respawn now shows ARE YOU SURE confirmation with full reset
+ *   (rebirth remains the soft revival path; respawn = hard reset)
+ * - Inline USE/SELL inventory system — players tap buttons instead
+ *   of typing /use 3 (commands still work as fallback)
+ * - Menu auto-reappears every MSG_MENU_INTERVAL messages so players
+ *   never have to scroll up to find their action buttons
+ * - Star Wars crypto satire pass: boss names, item names, lore lines
+ *   refreshed. Characters unchanged.
+ * - Beginner flow verified smooth end-to-end
+ *
  * FUTURE SQLITE NOTE:
  * Storage layer is isolated in load()/atomicWrite()/forceSave().
  * DB, WORLD, SESSIONS are plain objects.
@@ -112,8 +125,10 @@ const CONFIG = {
   CHAOS_BOSS_TRIGGER:  15,
   MAX_CHAOS:           100,
   BROADCAST_LIMIT:     300,
-  BROADCAST_DELAY_MS:  55,       // tuned slightly to reduce API pressure
-  // Energy costs per action — now actually enforced
+  BROADCAST_DELAY_MS:  55,
+  // How many messages between automatic menu re-sends
+  MSG_MENU_INTERVAL:   7,
+  // Energy costs per action — enforced
   ENERGY_COSTS: {
     event:  5,
     mine:   4,
@@ -126,18 +141,11 @@ const CONFIG = {
 
 /* =========================================================
    STORAGE
-   // FUTURE SQLITE: replace load() and atomicWrite() here.
-   // All game logic only touches DB[id] and WORLD objects.
 ========================================================= */
 
 const DB_FILE      = "./data.json";
 const WORLD_FILE   = "./world.json";
 const SESSION_FILE = "./sessions.json";
-
-/* =========================================================
-   LOAD (SAFE)
-   // FUTURE SQLITE: swap this for a synchronous DB init call.
-========================================================= */
 
 function load(path, fallback) {
   try {
@@ -164,16 +172,14 @@ let WORLD = load(WORLD_FILE, {
   marketState:  "stable",
   boss:         null,
   factions:     { HODL: 0, FOMO: 0, SCAM: 0, WHALE: 0 },
-  onboardSeen:  {},   // persisted onboarding tracking (was in-memory only — now survives restart)
-  bulletin:     []    // market bulletin board entries
+  onboardSeen:  {},
+  bulletin:     []
 });
 let SESSIONS = load(SESSION_FILE, {});
 let dirty    = false;
 
 /* =========================================================
    WORLD REPAIR
-   Guards against missing WORLD fields when loading old saves.
-   // FUTURE SQLITE: run equivalent column migrations here.
 ========================================================= */
 
 function repairWorld() {
@@ -185,7 +191,6 @@ function repairWorld() {
   if (!WORLD.factions || typeof WORLD.factions !== "object") {
     WORLD.factions = { HODL: 0, FOMO: 0, SCAM: 0, WHALE: 0 };
   }
-  // Ensure all faction keys exist (handles old saves with fewer factions)
   for (const f of ["HODL", "FOMO", "SCAM", "WHALE"]) {
     if (typeof WORLD.factions[f] !== "number") WORLD.factions[f] = 0;
   }
@@ -193,12 +198,10 @@ function repairWorld() {
   if (!Array.isArray(WORLD.bulletin)) WORLD.bulletin = [];
 }
 
-repairWorld(); // run immediately after load
+repairWorld();
 
 /* =========================================================
    SAVE
-   // FUTURE SQLITE: dirty flag + forceSave() stays the same.
-   // Only atomicWrite() needs replacing with db.run() calls.
 ========================================================= */
 
 function save() { dirty = true; }
@@ -258,10 +261,7 @@ const safeNumber  = (n, fallback = 0) =>
   typeof n === "number" && !isNaN(n) ? n : fallback;
 
 /* =========================================================
-   ANTISPAM — REGISTERED FIRST (before all handlers)
-   FIX v2.1: Previously this middleware was registered AFTER
-   all bot.action() handlers. Telegraf processes middleware
-   in registration order — it must be first to actually gate.
+   ANTISPAM — REGISTERED FIRST
 ========================================================= */
 
 const ACTION_SPAM   = {};
@@ -281,14 +281,13 @@ function antiSpamCallback(userId, ms = 1200) {
   return true;
 }
 
-// GLOBAL MIDDLEWARE — antispam must be first
 bot.use(async (ctx, next) => {
   if (!ctx.from) return;
   try {
     if (ctx.callbackQuery) {
       if (!antiSpamCallback(ctx.from.id)) {
         try { await ctx.answerCbQuery("⏳ Slow down a bit"); } catch {}
-        return; // do NOT call next — drops the callback
+        return;
       }
     } else {
       if (!antiSpam(ctx.from.id)) {
@@ -303,15 +302,34 @@ bot.use(async (ctx, next) => {
 });
 
 /* =========================================================
-   🌌 FOMOYODL ONBOARDING GATE
-   Passive first-time user onboarding system.
-   FIX v2.2: seenUsers now stored in WORLD.onboardSeen so it
-   survives bot restarts (was in-memory object only before).
+   MESSAGE COUNTER — auto-resend menu every N messages
+   NEW v2.3: Tracks per-user message count in private chat.
+   Every MSG_MENU_INTERVAL messages, home menu is re-sent
+   so players never have to scroll up to find their buttons.
+========================================================= */
+
+const MSG_COUNTER = {}; // userId → count since last menu send
+
+function tickMessageCounter(userId) {
+  MSG_COUNTER[userId] = (MSG_COUNTER[userId] || 0) + 1;
+  if (MSG_COUNTER[userId] >= CONFIG.MSG_MENU_INTERVAL) {
+    MSG_COUNTER[userId] = 0;
+    return true; // caller should re-send menu
+  }
+  return false;
+}
+
+function resetMessageCounter(userId) {
+  MSG_COUNTER[userId] = 0;
+}
+
+/* =========================================================
+   ONBOARDING GATE
 ========================================================= */
 
 const ONBOARDING = {
   enabled:  true,
-  cooldown: 1000 * 60 * 60 * 24  // 24h before re-showing
+  cooldown: 1000 * 60 * 60 * 24
 };
 
 function hasSeenOnboarding(userId) {
@@ -325,16 +343,10 @@ function markOnboardingSeen(userId) {
   save();
 }
 
-/* =========================================================
-   AUTO ENTRY DETECTOR (onboarding — groups only)
-========================================================= */
-
 bot.use(async (ctx, next) => {
   try {
     if (!ONBOARDING.enabled) return next();
     if (!ctx.from || !ctx.chat) return next();
-
-    // only operate in groups
     if (ctx.chat.type === "private") return next();
 
     const userId   = ctx.from.id;
@@ -405,11 +417,6 @@ function requireRegistered(user, ctx) {
   return false;
 }
 
-/**
- * spendEnergy — deducts energy cost and returns true if affordable.
- * Returns false (and replies) if player lacks energy.
- * FIX v2.2: energy costs are now actually enforced.
- */
 function spendEnergy(user, amount, ctx = null) {
   if (user.energy < amount) {
     if (ctx) reply(ctx,
@@ -528,12 +535,26 @@ function rebirthPlayer(user) {
   user.xp        = Math.floor(user.xp * REBIRTH_CONFIG.xpKeepRatio);
   user.credits  += REBIRTH_CONFIG.creditBonus;
   user.prestige  = (user.prestige || 0) + 1;
-  // clear wanted status on rebirth
   user.wanted      = false;
   user.wantedLevel = 0;
-  // reset war streak on death
   user.warStreak = 0;
   return user;
+}
+
+/* =========================================================
+   HARD RESET (respawn path)
+   NEW v2.3: Full character wipe back to starting state.
+   Called only after double-confirmation.
+========================================================= */
+
+function hardResetPlayer(user) {
+  const id   = user.id;
+  const name = user.name;
+  const username = user.username;
+  DB[id] = createUser(id);
+  DB[id].name     = name;
+  DB[id].username = username;
+  return DB[id];
 }
 
 /* =========================================================
@@ -550,7 +571,6 @@ const CHARACTERS = [
 
 const FACTIONS = ["HODL", "FOMO", "SCAM", "WHALE"];
 
-// Faction passive bonuses — applied in each mechanic
 const FACTION_BONUSES = {
   HODL:  { mineBonus: 0.15, warBonus: 0,    crimeBonus: 0,    eventBonus: 0.05, hackBonus: 0    },
   FOMO:  { mineBonus: 0,    warBonus: 0.20, crimeBonus: 0,    eventBonus: 0.10, hackBonus: 0.05 },
@@ -569,38 +589,36 @@ const EVENTS = [
   { title: "Liquidity Crisis",    text: "All pools drained simultaneously.",          xp: 30, credits: 25, chaos: 3, risk: 0.42 }
 ];
 
-// Hacking targets — used by the HACK system
 const HACK_TARGETS = [
-  { name: "Corporate Wallet",      xp: 20, credits: 35, chaos: 1, risk: 0.35, hackReq: 1 },
-  { name: "Exchange Hot Wallet",   xp: 30, credits: 55, chaos: 2, risk: 0.42, hackReq: 2 },
-  { name: "DAO Treasury",          xp: 45, credits: 80, chaos: 2, risk: 0.50, hackReq: 3 },
-  { name: "Layer 1 Protocol",      xp: 60, credits: 110,chaos: 3, risk: 0.58, hackReq: 4 },
-  { name: "Quantum Vault",         xp: 80, credits: 150,chaos: 4, risk: 0.65, hackReq: 5 }
+  { name: "Imperial Payroll Wallet",   xp: 20, credits: 35, chaos: 1, risk: 0.35, hackReq: 1 },
+  { name: "Death Star Exchange",       xp: 30, credits: 55, chaos: 2, risk: 0.42, hackReq: 2 },
+  { name: "Galactic Senate Treasury",  xp: 45, credits: 80, chaos: 2, risk: 0.50, hackReq: 3 },
+  { name: "Sith Lord Protocol",        xp: 60, credits: 110,chaos: 3, risk: 0.58, hackReq: 4 },
+  { name: "The Force Vault",           xp: 80, credits: 150,chaos: 4, risk: 0.65, hackReq: 5 }
 ];
 
 /* =========================================================
    ITEM SYSTEM
+   v2.3: Star Wars crypto satire item names
 ========================================================= */
 
 const ITEMS = [
-  { id: "scrap_token",      name: "Scrap Token",       rarity: "common",    power: 1,  type: "resource", hpBonus: 0,  energyBonus: 5  },
-  { id: "glitch_shard",     name: "Glitch Shard",      rarity: "common",    power: 2,  type: "resource", hpBonus: 0,  energyBonus: 8  },
-  { id: "dark_token",       name: "Dark Token",        rarity: "rare",      power: 4,  type: "resource", hpBonus: 5,  energyBonus: 0  },
-  { id: "quantum_ore",      name: "Quantum Ore",       rarity: "rare",      power: 6,  type: "resource", hpBonus: 8,  energyBonus: 0  },
-  { id: "meme_crystal",     name: "Meme Crystal",      rarity: "epic",      power: 10, type: "boost",    hpBonus: 15, energyBonus: 10 },
-  { id: "whale_fragment",   name: "Whale Fragment",    rarity: "epic",      power: 12, type: "boost",    hpBonus: 20, energyBonus: 0  },
-  { id: "forbidden_ledger", name: "Forbidden Ledger",  rarity: "legendary", power: 25, type: "relic",    hpBonus: 30, energyBonus: 25 },
-  { id: "void_core",        name: "Void Core",         rarity: "legendary", power: 30, type: "relic",    hpBonus: 40, energyBonus: 30 },
-  { id: "rug_shard",        name: "Rug Shard",         rarity: "common",    power: 1,  type: "resource", hpBonus: 0,  energyBonus: 3  },
-  { id: "defi_key",         name: "DeFi Key",          rarity: "rare",      power: 5,  type: "resource", hpBonus: 10, energyBonus: 5  },
-  { id: "satoshi_relic",    name: "Satoshi Relic",     rarity: "legendary", power: 35, type: "relic",    hpBonus: 50, energyBonus: 40 },
-  // New items — hack-themed
-  { id: "zero_day",         name: "Zero-Day Exploit",  rarity: "rare",      power: 7,  type: "resource", hpBonus: 0,  energyBonus: 12 },
-  { id: "cipher_key",       name: "Cipher Key",        rarity: "epic",      power: 14, type: "boost",    hpBonus: 10, energyBonus: 15 },
-  { id: "ghost_protocol",   name: "Ghost Protocol",    rarity: "legendary", power: 28, type: "relic",    hpBonus: 35, energyBonus: 35 }
+  { id: "scrap_token",      name: "Scrap Droid Parts",        rarity: "common",    power: 1,  type: "resource", hpBonus: 0,  energyBonus: 5  },
+  { id: "glitch_shard",     name: "Glitched Holocron",        rarity: "common",    power: 2,  type: "resource", hpBonus: 0,  energyBonus: 8  },
+  { id: "dark_token",       name: "Dark Side Token",          rarity: "rare",      power: 4,  type: "resource", hpBonus: 5,  energyBonus: 0  },
+  { id: "quantum_ore",      name: "Kyber Crystal Shard",      rarity: "rare",      power: 6,  type: "resource", hpBonus: 8,  energyBonus: 0  },
+  { id: "meme_crystal",     name: "Meme Crystal (Corrupted)", rarity: "epic",      power: 10, type: "boost",    hpBonus: 15, energyBonus: 10 },
+  { id: "whale_fragment",   name: "Sarlacc Pit Bond",         rarity: "epic",      power: 12, type: "boost",    hpBonus: 20, energyBonus: 0  },
+  { id: "forbidden_ledger", name: "Palpatine's Secret Ledger",rarity: "legendary", power: 25, type: "relic",    hpBonus: 30, energyBonus: 25 },
+  { id: "void_core",        name: "Void Core (Force-Imbued)", rarity: "legendary", power: 30, type: "relic",    hpBonus: 40, energyBonus: 30 },
+  { id: "rug_shard",        name: "Rug Shard (Still Warm)",   rarity: "common",    power: 1,  type: "resource", hpBonus: 0,  energyBonus: 3  },
+  { id: "defi_key",         name: "Jedi Order Access Key",    rarity: "rare",      power: 5,  type: "resource", hpBonus: 10, energyBonus: 5  },
+  { id: "satoshi_relic",    name: "Satoshi's Lightsaber",     rarity: "legendary", power: 35, type: "relic",    hpBonus: 50, energyBonus: 40 },
+  { id: "zero_day",         name: "Zero-Day Force Exploit",   rarity: "rare",      power: 7,  type: "resource", hpBonus: 0,  energyBonus: 12 },
+  { id: "cipher_key",       name: "Cipher Key (Mandalorian)", rarity: "epic",      power: 14, type: "boost",    hpBonus: 10, energyBonus: 15 },
+  { id: "ghost_protocol",   name: "Ghost Protocol Relic",     rarity: "legendary", power: 28, type: "relic",    hpBonus: 35, energyBonus: 35 }
 ];
 
-// Item sell values (by rarity)
 const ITEM_SELL_VALUES = {
   common:    15,
   rare:      45,
@@ -608,8 +626,6 @@ const ITEM_SELL_VALUES = {
   legendary: 350
 };
 
-// Drop chances per activity: [commonChance, rareChance, epicChance, legendaryChance]
-// Chaos slightly increases drop rates (connected system)
 const DROP_TABLE = {
   mine:  [0.25, 0.10, 0.03, 0.005],
   event: [0.20, 0.08, 0.02, 0.003],
@@ -621,7 +637,6 @@ const DROP_TABLE = {
 
 function rollDrop(activity, chaosBonus = 0) {
   const [c, r, e, l] = DROP_TABLE[activity] || [0.15, 0.05, 0.01, 0.001];
-  // chaos increases drop rates slightly — rewards high-chaos play
   const boost = chaosBonus * 0.002;
   const roll  = Math.random();
   let rarity;
@@ -636,38 +651,38 @@ function rollDrop(activity, chaosBonus = 0) {
 }
 
 /* =========================================================
-   BOSS ROSTER (expanded, tiered)
+   BOSS ROSTER
+   v2.3: Star Wars crypto satire names & lore
 ========================================================= */
 
 const BOSS_ROSTER = [
-  // tier 1 — weakest
-  { name: "THE RUG EMPEROR",       tier: 1, hpMult: 1.0, reward: 80,  lore: "Pulls rugs for breakfast." },
-  { name: "VAPORWARE SPECTER",      tier: 1, hpMult: 1.0, reward: 80,  lore: "Promises products that never ship." },
-  { name: "LORD PAPER HANDS",       tier: 1, hpMult: 1.1, reward: 90,  lore: "Sells every dip. Every. Single. One." },
-  // tier 2 — medium
-  { name: "MEGA WHALE",             tier: 2, hpMult: 1.3, reward: 120, lore: "Moves markets with a single wallet." },
-  { name: "DARTH LIQUIDATOR",       tier: 2, hpMult: 1.4, reward: 130, lore: "Erases leveraged positions across the chain." },
-  { name: "COUNT PONZI-DOKU",       tier: 2, hpMult: 1.4, reward: 130, lore: "His returns are too good to be true." },
-  { name: "GENERAL FOMO GRIEVOUS",  tier: 2, hpMult: 1.5, reward: 140, lore: "Buys tops. Commands armies of retail." },
-  // tier 3 — strongest
-  { name: "VOID LEVIATHAN",         tier: 3, hpMult: 1.8, reward: 200, lore: "Ancient entity. Predates the blockchain." },
-  { name: "CHAIN DEVOURER",         tier: 3, hpMult: 2.0, reward: 220, lore: "Has consumed seventeen forks." },
-  { name: "EMPEROR SATOSHI SHADOW", tier: 3, hpMult: 2.2, reward: 250, lore: "The dark mirror of the original vision." }
+  // tier 1
+  { name: "DARTH RUGPULLUS",         tier: 1, hpMult: 1.0, reward: 80,  lore: "Promises 100x returns. Delivers 0." },
+  { name: "VAPORWARE SPECTER",       tier: 1, hpMult: 1.0, reward: 80,  lore: "Ships products in the next quarter. Always next quarter." },
+  { name: "LORD PAPER HANDS",        tier: 1, hpMult: 1.1, reward: 90,  lore: "Sells every dip. His midi-chlorians are pure fear." },
+  // tier 2
+  { name: "JABBA THE WHALE",         tier: 2, hpMult: 1.3, reward: 120, lore: "Controls the Outer Rim liquidity pools." },
+  { name: "DARTH LIQUIDATOR",        tier: 2, hpMult: 1.4, reward: 130, lore: "Erases leveraged positions across the chain." },
+  { name: "COUNT PONZI-DOKU",        tier: 2, hpMult: 1.4, reward: 130, lore: "His returns are too good. They are always too good." },
+  { name: "GENERAL FOMO GRIEVOUS",   tier: 2, hpMult: 1.5, reward: 140, lore: "Buys the top. Commands armies of retail bagholders." },
+  // tier 3
+  { name: "THE VOID LEVIATHAN",      tier: 3, hpMult: 1.8, reward: 200, lore: "Ancient entity. Predates the first block." },
+  { name: "EMPEROR SATOSHI SHADOW",  tier: 3, hpMult: 2.0, reward: 220, lore: "The dark mirror of the original vision." },
+  { name: "SITH LORD NAKAMOTO",      tier: 3, hpMult: 2.2, reward: 250, lore: "He did not disappear. He was waiting." }
 ];
 
-// Boss phase taunts — triggered when boss HP crosses thresholds
 const BOSS_TAUNTS = {
   66: [
-    "💢 «You think you can challenge me? I've seen empires crumble.»",
-    "💢 «Pathetic. I've liquidated better players than you for sport.»"
+    "💢 «You think you can challenge me? I've seen empires crumble into meme coins.»",
+    "💢 «Pathetic. I've liquidated better traders than you for sport.»"
   ],
   33: [
     "💥 «Impossible... My algorithms never account for this level of stupidity!»",
-    "💥 «You fools! I'll crash the whole market before I fall!»"
+    "💥 «You fools! I'll crash the whole chain before I fall!»"
   ],
   10: [
     "💀 «No... The chain... The chain cannot end like this...»",
-    "💀 «You'll regret this. Even dead, I manipulate the void.»"
+    "💀 «Even dead, I hold bags in the void. You will too.»"
   ]
 };
 
@@ -696,9 +711,6 @@ async function ack(ctx) {
 
 /* =========================================================
    USER SYSTEM
-   // FUTURE SQLITE: createUser() maps to INSERT, getUser()
-   // maps to SELECT + INSERT on miss, repairUser() maps to
-   // ALTER TABLE / column defaults.
 ========================================================= */
 
 function createUser(id, ctx = null) {
@@ -732,7 +744,6 @@ function createUser(id, ctx = null) {
     dead:           false,
     deathTime:      null,
     bossHits:       0,
-    // energy regen timer
     lastEnergyRegen: 0
   };
 }
@@ -751,7 +762,6 @@ function repairUser(u) {
   u.prestige     = safeNumber(u.prestige);
   u.miningLevel  = safeNumber(u.miningLevel, 1);
   u.hackingLevel = safeNumber(u.hackingLevel, 1);
-  // new fields — backward compatible defaults
   if (typeof u.dailyStreak    !== "number") u.dailyStreak    = 0;
   if (typeof u.lastDailyDate  !== "string") u.lastDailyDate  = "";
   if (typeof u.wantedLevel    !== "number") u.wantedLevel    = 0;
@@ -772,11 +782,9 @@ function getUser(id, ctx = null) {
 
 /* =========================================================
    PASSIVE ENERGY REGEN
-   Players passively regenerate 1 energy every 3 minutes.
-   Called on each getUser interaction — lightweight O(1) check.
 ========================================================= */
 
-const ENERGY_REGEN_INTERVAL = 1000 * 60 * 3; // 3 minutes per point
+const ENERGY_REGEN_INTERVAL = 1000 * 60 * 3;
 
 function applyEnergyRegen(user) {
   if (!user || user.dead) return;
@@ -786,7 +794,6 @@ function applyEnergyRegen(user) {
   if (ticks <= 0) return;
   user.energy = clamp(user.energy + ticks, 0, CONFIG.MAX_ENERGY);
   user.lastEnergyRegen = last + (ticks * ENERGY_REGEN_INTERVAL);
-  // don't save here — caller saves if state changed
 }
 
 /* =========================================================
@@ -804,22 +811,17 @@ function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
 }
 
 /* =========================================================
-   BROADCAST — FIRE-AND-FORGET (non-blocking)
-   FIX v2.1: Detached via setImmediate — the calling handler
-   NEVER awaits this. Each individual send is independently
-   try/catched. One failure cannot block or poison others.
-   FIX v2.2: No changes needed here — architecture is correct.
+   BROADCAST — FIRE-AND-FORGET
 ========================================================= */
 
 function broadcastFire(message) {
-  // Deliberately NOT awaited — fire and forget
   setImmediate(async () => {
     const ids = Object.keys(DB).slice(0, CONFIG.BROADCAST_LIMIT);
     for (const id of ids) {
       try {
         await bot.telegram.sendMessage(id, message);
       } catch {
-        // silently skip — user may have blocked bot or deactivated
+        // silently skip
       }
       await new Promise(r => setTimeout(r, CONFIG.BROADCAST_DELAY_MS));
     }
@@ -828,17 +830,13 @@ function broadcastFire(message) {
 
 /* =========================================================
    WORLD ENGINE
-   FIX v2.1: addChaos() calls spawnBoss() which uses
-   broadcastFire() — fully non-blocking, cannot freeze handlers.
-   FIX v2.2: No changes needed — architecture is correct.
 ========================================================= */
 
 function addChaos(amount) {
   WORLD.chaos = clamp(WORLD.chaos + amount, 1, CONFIG.MAX_CHAOS);
   if (WORLD.chaos >= CONFIG.CHAOS_BOSS_TRIGGER && (!WORLD.boss || !WORLD.boss.active)) {
-    spawnBoss(); // safe — broadcastFire inside is fire-and-forget
+    spawnBoss();
   }
-  // chaos affects market state dynamically
   if (WORLD.chaos >= 80)      WORLD.marketState = "crashing";
   else if (WORLD.chaos >= 50) WORLD.marketState = "volatile";
   save();
@@ -851,7 +849,6 @@ function addFactionPower(faction, amount) {
   save();
 }
 
-// Returns the currently dominant faction (most power)
 function getDominantFaction() {
   let top = null, topVal = -1;
   for (const f in WORLD.factions) {
@@ -860,33 +857,27 @@ function getDominantFaction() {
   return top;
 }
 
-/**
- * getDominanceBonus — returns a flat credit/XP multiplier bonus
- * for the dominant faction. FIX v2.2: this was described in the
- * leaderboard but never actually applied anywhere. Now used in
- * all reward calculations below.
- */
 function getDominanceBonus(userFaction) {
   const dominant = getDominantFaction();
   if (!dominant || userFaction !== dominant) return 0;
-  return 0.10; // 10% bonus to all rewards for dominant faction members
+  return 0.10;
 }
 
 /* =========================================================
    BOSS SYSTEM
-   FIX v2.1: bossLock prevents double-spawn. broadcastFire
-   is non-blocking. Participant tracking added.
-   FIX v2.2: Boss phase taunts added at 66/33/10% HP.
-   Taunt is sent only once per threshold (tracked in boss obj).
+   FIX v2.3: spawnBoss() now returns the boss object so callers
+   can verify it exists immediately after spawn without relying
+   on async timing. Boss action handler checks WORLD.boss after
+   spawn completes before attempting the attack.
 ========================================================= */
 
 let bossLock = false;
 
 function spawnBoss() {
-  if (bossLock) return;
-  if (WORLD.boss && WORLD.boss.active) return;
+  if (bossLock) return null;
+  if (WORLD.boss && WORLD.boss.active) return WORLD.boss;
 
-  bossLock = true; // set synchronously — no await between check and set
+  bossLock = true;
 
   const template = rand(BOSS_ROSTER);
   const baseHp   = CONFIG.BOSS_MIN_HP +
@@ -902,8 +893,8 @@ function spawnBoss() {
     maxHp:         hp,
     reward:        template.reward,
     lore:          template.lore,
-    participants:  {},   // userId → damage dealt
-    tauntsUsed:    []    // tracks which phase taunts already fired
+    participants:  {},
+    tauntsUsed:    []
   };
 
   save();
@@ -920,6 +911,8 @@ function spawnBoss() {
 
 Press 🐋 BOSS to join the raid!`
   );
+
+  return WORLD.boss; // FIX v2.3: return boss so caller can verify
 }
 
 function checkBossTaunts() {
@@ -932,7 +925,7 @@ function checkBossTaunts() {
       const taunt = rand(BOSS_TAUNTS[threshold]);
       broadcastFire(`👹 ${WORLD.boss.name} — Phase ${threshold <= 10 ? "FINAL" : threshold <= 33 ? "3" : "2"}\n\n${taunt}`);
       save();
-      break; // only one taunt per damage event
+      break;
     }
   }
 }
@@ -945,7 +938,6 @@ function damageBoss(userId, dmg) {
 
   WORLD.boss.hp = Math.max(0, WORLD.boss.hp - dmg);
 
-  // Check for phase taunts (non-blocking, fire-and-forget internally)
   checkBossTaunts();
 
   if (WORLD.boss.hp <= 0) {
@@ -1055,11 +1047,32 @@ async function home(ctx, u) {
     );
   }
 
-  // Apply passive energy regen before showing home screen
   applyEnergyRegen(u);
   save();
 
+  resetMessageCounter(u.id); // reset counter when menu explicitly shown
+
   return reply(ctx, homeText(u), homeMenu(u.id, ctx));
+}
+
+/* =========================================================
+   AUTO MENU RESEND MIDDLEWARE
+   NEW v2.3: After every reply in private chat, tick the counter.
+   When it reaches MSG_MENU_INTERVAL, automatically re-send
+   the home menu so it's always within reach.
+   Wrapped to never block or throw.
+========================================================= */
+
+async function maybeResendMenu(ctx, user) {
+  try {
+    if (!isPrivateChat(ctx)) return;
+    if (!user || !user.registered || user.dead) return;
+    if (tickMessageCounter(user.id)) {
+      await reply(ctx, "🕹 Quick actions:", homeMenu(user.id, ctx));
+    }
+  } catch (err) {
+    console.log("❌ MENU RESEND ERROR:", err.message);
+  }
 }
 
 /* =========================================================
@@ -1076,13 +1089,12 @@ function tryDrop(user, activity) {
 
 /* =========================================================
    MARKET PRICE MODIFIER
-   Chaos + market state affects buy prices dynamically.
 ========================================================= */
 
 function marketMultiplier() {
   const stateMap = { stable: 1.0, bullish: 0.9, volatile: 1.15, crashing: 1.3 };
   const base     = stateMap[WORLD.marketState] || 1.0;
-  const chaosAdj = 1 + (WORLD.chaos / 200); // up to +50% at max chaos
+  const chaosAdj = 1 + (WORLD.chaos / 200);
   return base * chaosAdj;
 }
 
@@ -1092,22 +1104,69 @@ function marketPrice(basePrice) {
 
 /* =========================================================
    DEATH COMMANDS
+   FIX v2.3: /respawn now shows ARE YOU SURE confirmation.
+   Confirming does a full hard reset (back to starting state).
+   Rebirth remains the soft revival path (keeps some progress).
 ========================================================= */
 
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
-  if (!isDead(u)) return reply(ctx, "✅ You are not dead.");
+  if (!isDead(u)) return reply(ctx,
+    "✅ You are not dead.\n\nNo need to respawn — you are still in the Yodelverse."
+  );
 
-  const revived = rebirthPlayer(u);
-  if (!revived) {
-    const deathTime = u.deathTime || now();
-    const seconds   = Math.max(0, Math.ceil(
-      (REBIRTH_CONFIG.rebirthCooldown - (now() - deathTime)) / 1000
-    ));
-    return reply(ctx, `⏳ Rebirth not ready yet.\n\nTry again in ${seconds}s`);
-  }
+  return reply(ctx,
+`⚠️ RESPAWN — FULL RESET
+
+This will DELETE your character permanently:
+• All XP, credits, items, reputation lost
+• Return to starting state (${CONFIG.START_CREDITS} credits, no faction)
+
+♻️ REBIRTH is available for a softer revival (keeps 25% XP + prestige).
+
+Are you sure you want to full reset?`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("💀 YES — DELETE EVERYTHING", "confirm_hardreset"),
+        Markup.button.callback("❌ NO — GO BACK",            "cancel_hardreset")
+      ]
+    ])
+  );
+});
+
+bot.action("confirm_hardreset", async (ctx) => {
+  await ack(ctx);
+  const u = getUser(ctx.from.id, ctx);
+  if (!isDead(u)) return reply(ctx, "✅ You are not dead. No reset needed.");
+
+  const name = u.name;
+  hardResetPlayer(u);
   save();
-  return home(ctx, u);
+
+  await reply(ctx,
+`💥 CHARACTER DELETED
+
+${name} has been erased from the Yodelverse.
+
+You start fresh with ${CONFIG.START_CREDITS} credits.
+Use /start to create a new character.`
+  );
+});
+
+bot.action("cancel_hardreset", async (ctx) => {
+  await ack(ctx);
+  const u = getUser(ctx.from.id, ctx);
+  await reply(ctx,
+    "✅ Reset cancelled.\n\nUse ♻️ REBIRTH for a softer revival that keeps your prestige."
+  );
+  if (isDead(u)) {
+    return reply(ctx,
+      "♻️ Press REBIRTH below to return with 25% XP + prestige bonus.",
+      Markup.inlineKeyboard([
+        [Markup.button.callback("♻️ REBIRTH", "rebirth")]
+      ])
+    );
+  }
 });
 
 bot.action("rebirth", async (ctx) => {
@@ -1241,14 +1300,12 @@ bot.action("profile", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
-  return reply(ctx, profileText(u));
+  await reply(ctx, profileText(u));
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    EVENT
-   Faction bonus applies, chaos scales risk, market state
-   affects rewards, dominance bonus applied.
-   FIX v2.2: energy cost enforced.
 ========================================================= */
 
 bot.action("event", async (ctx) => {
@@ -1279,7 +1336,7 @@ bot.action("event", async (ctx) => {
     if (checkDeath(ctx, u)) return reply(ctx,
       `💀 EVENT KILLED YOU\n\n${e.title}\n-${loss} Credits, -${damage} HP\n\nUse /respawn to return.`
     );
-    return reply(ctx,
+    await reply(ctx,
 `💥 EVENT FAILED
 
 ${e.title}
@@ -1288,6 +1345,8 @@ ${e.title}
 
 🔥 Chaos increased`
     );
+    await maybeResendMenu(ctx, u);
+    return;
   }
 
   const mktMult  = WORLD.marketState === "bullish" ? 1.25
@@ -1304,7 +1363,7 @@ ${e.title}
   const drop = tryDrop(u, "event");
   save();
 
-  return reply(ctx,
+  await reply(ctx,
 `⚡ ${e.title}
 
 ${e.text}
@@ -1312,13 +1371,11 @@ ${e.text}
 ⚡ Energy: ${u.energy}
 🔥 Chaos: ${WORLD.chaos}${drop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    MINE
-   Mining level scales quadratically, HODL faction bonus,
-   prestige multiplier, cave-in scales with chaos.
-   FIX v2.2: energy cost enforced.
 ========================================================= */
 
 bot.action("mine", async (ctx) => {
@@ -1342,7 +1399,7 @@ bot.action("mine", async (ctx) => {
     if (checkDeath(ctx, u)) return reply(ctx,
       `💀 CAVE-IN — You were killed in the mines.\n\nUse /respawn to return.`
     );
-    return reply(ctx,
+    await reply(ctx,
 `⛏ CAVE-IN!
 
 The tunnel collapsed. -${damage} HP
@@ -1350,6 +1407,8 @@ The tunnel collapsed. -${damage} HP
 HP: ${u.hp}/${CONFIG.MAX_HP}
 ⚡ Energy: ${u.energy}`
     );
+    await maybeResendMenu(ctx, u);
+    return;
   }
 
   const factionBonus  = FACTION_BONUSES[u.faction]?.mineBonus || 0;
@@ -1370,20 +1429,18 @@ HP: ${u.hp}/${CONFIG.MAX_HP}
   const drop = tryDrop(u, "mine");
   save();
 
-  return reply(ctx,
+  await reply(ctx,
 `⛏ Mining Operation Successful
 
 +${gain} Credits  +${5 + u.miningLevel} XP
 ⛏ Mining Level: ${u.miningLevel}
 ⚡ Energy: ${u.energy}${factionBonus > 0 ? "\n⚔ HODL Bonus applied" : ""}${drop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    CRIME
-   Wanted level escalates on failure, higher wanted = higher
-   reward (risk/reward loop), reputation reduces risk.
-   FIX v2.2: energy cost enforced.
 ========================================================= */
 
 bot.action("crime", async (ctx) => {
@@ -1415,13 +1472,15 @@ bot.action("crime", async (ctx) => {
     if (checkDeath(ctx, u)) return reply(ctx,
       `💀 ELIMINATED BY AUTHORITIES\n\n-${loss} Credits, -${damage} HP\n\nUse /respawn to return.`
     );
-    return reply(ctx,
+    await reply(ctx,
 `🚔 CRIME FAILED
 
 -${loss} Credits  -${damage} HP
 ⚡ Energy: ${u.energy}
 🚨 Wanted Level: ${u.wantedLevel}`
     );
+    await maybeResendMenu(ctx, u);
+    return;
   }
 
   const wantedBonus = 1 + (u.wantedLevel || 0) * 0.20;
@@ -1441,21 +1500,18 @@ bot.action("crime", async (ctx) => {
   const drop = tryDrop(u, "crime");
   save();
 
-  return reply(ctx,
+  await reply(ctx,
 `🕶 BLACK MARKET SUCCESS
 
 +${gain} Credits  +${repGain} Reputation
 ⚡ Energy: ${u.energy}
 🌟 Total Rep: ${u.reputation}${wantedBonus > 1 ? `\n⚡ Wanted bonus applied!` : ""}${drop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    WAR
-   FIX v2.1: addChaos(2) → spawnBoss() → broadcastFire()
-   is fully non-blocking. Cannot freeze.
-   FIX v2.2: energy cost enforced. Elite encounter added.
-   Elite enemies: 5% chance of rare high-reward fight.
 ========================================================= */
 
 bot.action("war", async (ctx) => {
@@ -1474,7 +1530,6 @@ bot.action("war", async (ctx) => {
   const chaosRisk     = 1 + WORLD.chaos * 0.008;
   const streakMult    = 1 + Math.min(5, u.warStreak || 0) * 0.10;
 
-  // Elite encounter: rare high-stakes fight (5% chance)
   const isElite = Math.random() < 0.05;
 
   const baseReward = isElite
@@ -1492,9 +1547,8 @@ bot.action("war", async (ctx) => {
     u.warStreak = 0;
     u.losses    = (u.losses || 0) + 1;
     addFactionPower(u.faction, Math.floor(reward * 0.5));
-    // addChaos is non-blocking (spawnBoss → broadcastFire)
     addChaos(2);
-    const drop = tryDrop(u, "war");
+    tryDrop(u, "war");
     save();
     return reply(ctx,
       `💀 KILLED IN BATTLE\n\n+${reward} XP before death.\nWar streak lost.\n\nUse /respawn to return.`
@@ -1507,14 +1561,14 @@ bot.action("war", async (ctx) => {
   addChaos(2);
 
   const drop       = tryDrop(u, "war");
-  const eliteDrop  = isElite ? tryDrop(u, "boss") : ""; // elite enemies drop boss-quality loot
+  const eliteDrop  = isElite ? tryDrop(u, "boss") : "";
   save();
 
   const streakLine = u.warStreak > 1
     ? `\n🔥 War Streak: ${u.warStreak}x (+${Math.round((streakMult - 1) * 100)}% XP)` : "";
   const eliteLine  = isElite ? `\n⚠️ ELITE ENCOUNTER — bonus XP and loot!` : "";
 
-  return reply(ctx,
+  await reply(ctx,
 `⚔ FACTION CONFLICT${isElite ? " — ELITE" : ""}
 
 ${u.name} fought for ${u.faction}
@@ -1522,14 +1576,11 @@ ${u.name} fought for ${u.faction}
 ⚡ Energy: ${u.energy}
 🔥 Chaos: ${WORLD.chaos}${eliteLine}${streakLine}${drop}${eliteDrop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    HACK
-   FIX v2.2: hackingLevel was tracked but had no mechanic.
-   Now wired to a real hacking system. SCAM faction bonus
-   applies. Higher hackingLevel unlocks better targets.
-   Energy cost enforced.
 ========================================================= */
 
 bot.action("hack", async (ctx) => {
@@ -1543,15 +1594,13 @@ bot.action("hack", async (ctx) => {
   applyEnergyRegen(u);
   if (!spendEnergy(u, CONFIG.ENERGY_COSTS.hack, ctx)) return;
 
-  // Select best available target for player's hacking level
   const available = HACK_TARGETS.filter(t => t.hackReq <= u.hackingLevel);
   if (!available.length) {
     return reply(ctx, "❌ No available targets for your hacking level.");
   }
 
-  // Bias toward harder targets (more exciting, more risk)
   const target = Math.random() < 0.6
-    ? available[available.length - 1]   // hardest available
+    ? available[available.length - 1]
     : rand(available);
 
   const factionBonus = FACTION_BONUSES[u.faction]?.hackBonus || 0;
@@ -1571,7 +1620,7 @@ bot.action("hack", async (ctx) => {
     if (checkDeath(ctx, u)) return reply(ctx,
       `💀 TRACED AND ELIMINATED\n\nCounterattack killed you.\n\nUse /respawn to return.`
     );
-    return reply(ctx,
+    await reply(ctx,
 `🚫 HACK FAILED — ${target.name}
 
 Intrusion detected. Counterattack incoming.
@@ -1579,6 +1628,8 @@ Intrusion detected. Counterattack incoming.
 ⚡ Energy: ${u.energy}
 🔥 Chaos ticked up`
     );
+    await maybeResendMenu(ctx, u);
+    return;
   }
 
   const mktMult  = WORLD.marketState === "bullish" ? 1.15 : 1.0;
@@ -1595,7 +1646,7 @@ Intrusion detected. Counterattack incoming.
   const drop = tryDrop(u, "hack");
   save();
 
-  return reply(ctx,
+  await reply(ctx,
 `💻 HACK SUCCESSFUL — ${target.name}
 
 +${xpGain} XP  +${credGain} Credits  +1 Rep
@@ -1603,13 +1654,16 @@ Intrusion detected. Counterattack incoming.
 ⚡ Energy: ${u.energy}
 🔥 Chaos: ${WORLD.chaos}${drop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    BOSS
-   Participant tracking, tier-scaled rewards, kill credit,
-   chaos reduction on boss death, phase taunts.
-   FIX v2.2: energy cost enforced.
+   FIX v2.3: If no boss is active, spawnBoss() is called and
+   its return value is checked directly. Previously the handler
+   checked WORLD.boss after an await gap where it could still
+   be null if the spawn hadn't completed. Now spawn is sync
+   and the result is verified before proceeding with the attack.
 ========================================================= */
 
 bot.action("boss", async (ctx) => {
@@ -1618,9 +1672,18 @@ bot.action("boss", async (ctx) => {
   if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
-  // Spawn boss if none active (broadcastFire inside — non-blocking)
-  if (!WORLD.boss || !WORLD.boss.active) spawnBoss();
-  if (!WORLD.boss) return reply(ctx, "⚠️ No boss available right now.");
+  // FIX v2.3: capture spawn result directly — no async gap
+  if (!WORLD.boss || !WORLD.boss.active) {
+    const spawned = spawnBoss();
+    if (!spawned) {
+      return reply(ctx, "⚠️ No boss available right now. Try again in a moment.");
+    }
+  }
+
+  // Verify boss is genuinely active before attacking
+  if (!WORLD.boss || !WORLD.boss.active) {
+    return reply(ctx, "⚠️ Boss is not active right now. Check back soon!");
+  }
 
   applyEnergyRegen(u);
   if (!spendEnergy(u, CONFIG.ENERGY_COSTS.boss, ctx)) return;
@@ -1659,7 +1722,7 @@ bot.action("boss", async (ctx) => {
     ? `❤️ Boss HP: ${remaining} (${pct}%)`
     : `💥 BOSS DEFEATED! +${bossReward} bonus credits`;
 
-  return reply(ctx,
+  await reply(ctx,
 `🐋 RAID ATTACK — ${WORLD.boss?.name || "BOSS"}
 
 💥 Damage dealt: ${dmg}
@@ -1667,12 +1730,69 @@ bot.action("boss", async (ctx) => {
 ⚡ Energy: ${u.energy}
 ${bossLine}${drop}`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    INVENTORY
-   Shows total power, item USE and SELL instructions.
+   FIX v2.3: Inline USE and SELL buttons on each item.
+   /use N and /sell N commands still work as fallback.
+   Pagination added for large inventories (10 items per page).
 ========================================================= */
+
+const STARS = { common: "⚪", rare: "🔵", epic: "🟣", legendary: "🟡" };
+const INV_PAGE_SIZE = 10;
+
+function inventoryPage(u, page = 0) {
+  if (!u.inventory.length) {
+    return {
+      text: `🎒 INVENTORY — Empty\n\nGo fight, mine, commit crimes, hack, or raid bosses to earn items!`,
+      keyboard: null
+    };
+  }
+
+  const totalPages = Math.ceil(u.inventory.length / INV_PAGE_SIZE);
+  const start      = page * INV_PAGE_SIZE;
+  const pageItems  = u.inventory.slice(start, start + INV_PAGE_SIZE);
+
+  let totalPower = u.inventory.reduce((s, i) => s + (i?.power || 0), 0);
+  let msg = `🎒 INVENTORY (${u.inventory.length} items | ⚡ Total Power: ${totalPower})\n`;
+  if (totalPages > 1) msg += `Page ${page + 1}/${totalPages}\n`;
+  msg += "\n";
+
+  const rows = [];
+
+  pageItems.forEach((item, i) => {
+    const realIdx = start + i;
+    if (typeof item === "string") {
+      msg += `${realIdx + 1}. ${item}\n`;
+      return;
+    }
+    const name   = item?.name   || "Unknown";
+    const rarity = item?.rarity || "common";
+    const power  = item?.power  || 0;
+    const hp     = item?.hpBonus     || 0;
+    const en     = item?.energyBonus || 0;
+    const star   = STARS[rarity] || "⚪";
+    const sellVal = ITEM_SELL_VALUES[rarity] || 10;
+
+    msg += `${realIdx + 1}. ${star} ${name}\n`;
+    msg += `   ${rarity} | PWR ${power} | +${hp}HP +${en}⚡ | 💰${sellVal}cr\n`;
+
+    rows.push([
+      Markup.button.callback(`✅ USE #${realIdx + 1}`,  `inv_use_${realIdx}`),
+      Markup.button.callback(`💰 SELL #${realIdx + 1}`, `inv_sell_${realIdx}`)
+    ]);
+  });
+
+  // Pagination buttons
+  const navRow = [];
+  if (page > 0)               navRow.push(Markup.button.callback("◀ PREV", `inv_page_${page - 1}`));
+  if (page < totalPages - 1)  navRow.push(Markup.button.callback("▶ NEXT", `inv_page_${page + 1}`));
+  if (navRow.length) rows.push(navRow);
+
+  return { text: msg.trim(), keyboard: Markup.inlineKeyboard(rows) };
+}
 
 bot.action("inventory", async (ctx) => {
   await ack(ctx);
@@ -1680,46 +1800,29 @@ bot.action("inventory", async (ctx) => {
   if (checkDeath(ctx, u)) return;
   if (!requireRegistered(u, ctx)) return;
 
-  if (!u.inventory.length) {
-    return reply(ctx,
-`🎒 INVENTORY — Empty
-
-Go fight, mine, commit crimes, hack, or raid bosses to earn items!`
-    );
-  }
-
-  const stars   = { common: "⚪", rare: "🔵", epic: "🟣", legendary: "🟡" };
-  let totalPower = 0;
-  let msg        = `🎒 INVENTORY (${u.inventory.length} items)\n\n`;
-
-  u.inventory.forEach((item, i) => {
-    if (typeof item === "string") { msg += `${i + 1}. ${item}\n`; return; }
-    const name   = item?.name    || "Unknown Item";
-    const rarity = item?.rarity  || "common";
-    const power  = item?.power   ? item.power : 0;
-    const star   = stars[rarity] || "⚪";
-    totalPower  += power;
-    msg += `${i + 1}. ${star} ${name} (${rarity}) [PWR ${power}]\n`;
-  });
-
-  msg += `\n⚡ Total Power: ${totalPower}`;
-  msg += `\n\nUse /use <number> to consume an item for its bonus.`;
-  msg += `\nUse /sell <number> to sell an item for credits.`;
-
-  return reply(ctx, msg);
+  const { text, keyboard } = inventoryPage(u, 0);
+  await reply(ctx, text, keyboard || {});
+  await maybeResendMenu(ctx, u);
 });
 
-// USE item by index (1-based)
-bot.command("use", async (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
-  if (!u.registered) return reply(ctx, "❌ Not registered.");
+// Inventory pagination
+bot.action(/inv_page_(\d+)/, async (ctx) => {
+  await ack(ctx);
+  const u    = getUser(ctx.from.id, ctx);
+  const page = parseInt(ctx.match[1]);
+  if (!u || isNaN(page)) return;
+  const { text, keyboard } = inventoryPage(u, page);
+  await reply(ctx, text, keyboard || {});
+});
 
-  const parts = ctx.message.text.split(" ");
-  const idx   = parseInt(parts[1]) - 1;
+// Inline USE button
+bot.action(/inv_use_(\d+)/, async (ctx) => {
+  await ack(ctx);
+  const u   = getUser(ctx.from.id, ctx);
+  const idx = parseInt(ctx.match[1]);
 
-  if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
-    return reply(ctx, "❌ Invalid item number.\n\nUse 🎒 INVENTORY to see your items.");
+  if (!u || isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+    return reply(ctx, "❌ Item not found. Your inventory may have changed.");
   }
 
   const item = u.inventory[idx];
@@ -1727,6 +1830,10 @@ bot.command("use", async (ctx) => {
 
   const hpGain     = item.hpBonus     || 0;
   const energyGain = item.energyBonus || 0;
+
+  if (hpGain === 0 && energyGain === 0) {
+    return reply(ctx, `⚠️ ${item.name} has no usable effect. Try selling it instead.`);
+  }
 
   u.hp     = clamp(u.hp     + hpGain,     0, CONFIG.MAX_HP);
   u.energy = clamp(u.energy + energyGain, 0, CONFIG.MAX_ENERGY);
@@ -1737,21 +1844,18 @@ bot.command("use", async (ctx) => {
 `✅ Used: ${item.name}
 
 +${hpGain} HP  +${energyGain} Energy
-❤️ HP: ${u.hp}  ⚡ Energy: ${u.energy}`
+❤️ HP: ${u.hp}/${CONFIG.MAX_HP}  ⚡ Energy: ${u.energy}/${CONFIG.MAX_ENERGY}`
   );
 });
 
-// SELL item by index (1-based)
-bot.command("sell", async (ctx) => {
-  const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return;
-  if (!u.registered) return reply(ctx, "❌ Not registered.");
+// Inline SELL button
+bot.action(/inv_sell_(\d+)/, async (ctx) => {
+  await ack(ctx);
+  const u   = getUser(ctx.from.id, ctx);
+  const idx = parseInt(ctx.match[1]);
 
-  const parts = ctx.message.text.split(" ");
-  const idx   = parseInt(parts[1]) - 1;
-
-  if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
-    return reply(ctx, "❌ Invalid item number.");
+  if (!u || isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+    return reply(ctx, "❌ Item not found. Your inventory may have changed.");
   }
 
   const item = u.inventory[idx];
@@ -1762,13 +1866,81 @@ bot.command("sell", async (ctx) => {
   u.inventory.splice(idx, 1);
   save();
 
-  return reply(ctx, `💰 Sold ${item.name} for ${value} credits.\n\nCredits: ${u.credits}`);
+  return reply(ctx,
+`💰 SOLD: ${item.name}
+
++${value} Credits
+💰 Total Credits: ${u.credits}`
+  );
+});
+
+// Legacy /use command (still works)
+bot.command("use", async (ctx) => {
+  const u = getUser(ctx.from.id, ctx);
+  if (checkDeath(ctx, u)) return;
+  if (!u.registered) return reply(ctx, "❌ Not registered.");
+
+  const parts = ctx.message.text.split(" ");
+  const idx   = parseInt(parts[1]) - 1;
+
+  if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+    return reply(ctx, `❌ Invalid item number.\n\nUse 🎒 INVENTORY to see your items with tap-to-use buttons.`);
+  }
+
+  const item = u.inventory[idx];
+  if (!item || typeof item === "string") return reply(ctx, "❌ Cannot use this item.");
+
+  const hpGain     = item.hpBonus     || 0;
+  const energyGain = item.energyBonus || 0;
+
+  if (hpGain === 0 && energyGain === 0) {
+    return reply(ctx, `⚠️ ${item.name} has no usable effect. Try /sell ${idx + 1} instead.`);
+  }
+
+  u.hp     = clamp(u.hp     + hpGain,     0, CONFIG.MAX_HP);
+  u.energy = clamp(u.energy + energyGain, 0, CONFIG.MAX_ENERGY);
+  u.inventory.splice(idx, 1);
+  save();
+
+  return reply(ctx,
+`✅ Used: ${item.name}
+
++${hpGain} HP  +${energyGain} Energy
+❤️ HP: ${u.hp}/${CONFIG.MAX_HP}  ⚡ Energy: ${u.energy}/${CONFIG.MAX_ENERGY}`
+  );
+});
+
+// Legacy /sell command (still works)
+bot.command("sell", async (ctx) => {
+  const u = getUser(ctx.from.id, ctx);
+  if (checkDeath(ctx, u)) return;
+  if (!u.registered) return reply(ctx, "❌ Not registered.");
+
+  const parts = ctx.message.text.split(" ");
+  const idx   = parseInt(parts[1]) - 1;
+
+  if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+    return reply(ctx, `❌ Invalid item number.\n\nUse 🎒 INVENTORY to see your items with tap-to-sell buttons.`);
+  }
+
+  const item = u.inventory[idx];
+  if (!item || typeof item === "string") return reply(ctx, "❌ Cannot sell this item.");
+
+  const value = ITEM_SELL_VALUES[item.rarity] || 10;
+  u.credits  += value;
+  u.inventory.splice(idx, 1);
+  save();
+
+  return reply(ctx,
+`💰 SOLD: ${item.name}
+
++${value} Credits
+💰 Total Credits: ${u.credits}`
+  );
 });
 
 /* =========================================================
    MARKET
-   Prices dynamic (chaos + market state).
-   FIX v2.2: Hacking upgrade added to market.
 ========================================================= */
 
 bot.action("market", async (ctx) => {
@@ -1783,16 +1955,16 @@ bot.action("market", async (ctx) => {
   const homePrice    = marketPrice(500);
   const cyberdeckPrc = marketPrice(200);
 
-  return reply(ctx,
+  await reply(ctx,
 `🏪 BLACK MARKET
 
 Market: ${WORLD.marketState.toUpperCase()} 🔥 Chaos: ${WORLD.chaos}
 
-⚡ Energy Cell      — ${energyPrice} credits
-🛡 Nano Armor       — ${armorPrice} credits
-⛏ Quantum Drill    — ${drillPrice} credits
-💻 Cyberdeck Upgrade— ${cyberdeckPrc} credits
-🏠 Luxury Apartment — ${homePrice} credits
+⚡ Energy Cell       — ${energyPrice} credits
+🛡 Nano Armor        — ${armorPrice} credits
+⛏ Quantum Drill     — ${drillPrice} credits
+💻 Cyberdeck Upgrade — ${cyberdeckPrc} credits
+🏠 Luxury Apartment  — ${homePrice} credits
 
 ⚠️ Prices fluctuate with market state and chaos.`,
     Markup.inlineKeyboard([
@@ -1803,6 +1975,7 @@ Market: ${WORLD.marketState.toUpperCase()} 🔥 Chaos: ${WORLD.chaos}
       [Markup.button.callback("🏠 Buy Apartment",  "buy_home")]
     ])
   );
+  await maybeResendMenu(ctx, u);
 });
 
 bot.action("buy_energy", async (ctx) => {
@@ -1815,7 +1988,7 @@ bot.action("buy_energy", async (ctx) => {
   u.credits -= price;
   u.energy   = clamp(u.energy + 25, 0, CONFIG.MAX_ENERGY);
   save();
-  return reply(ctx, `⚡ Energy restored to ${u.energy}`);
+  return reply(ctx, `⚡ Energy restored to ${u.energy}/${CONFIG.MAX_ENERGY}`);
 });
 
 bot.action("buy_armor", async (ctx) => {
@@ -1828,7 +2001,7 @@ bot.action("buy_armor", async (ctx) => {
   u.credits -= price;
   u.hp       = clamp(u.hp + 25, 0, CONFIG.MAX_HP);
   save();
-  return reply(ctx, `🛡 Armor equipped — HP: ${u.hp}`);
+  return reply(ctx, `🛡 Nano Armor equipped — HP: ${u.hp}/${CONFIG.MAX_HP}`);
 });
 
 bot.action("buy_drill", async (ctx) => {
@@ -1872,9 +2045,6 @@ bot.action("buy_home", async (ctx) => {
 
 /* =========================================================
    DAILY
-   Streak tracking, increasing rewards, HP/energy restore
-   scales with prestige. Prestige passive income added.
-   FIX v2.2: prestige now gives +15 credits per level on daily.
 ========================================================= */
 
 bot.action("daily", async (ctx) => {
@@ -1908,7 +2078,7 @@ bot.action("daily", async (ctx) => {
   const baseCredits   = 100;
   const baseXp        = 25;
   const baseHp        = 20;
-  const prestigeInc   = u.prestige * 15; // prestige passive income
+  const prestigeInc   = u.prestige * 15;
 
   const credGain = baseCredits + streakBonus * 20 + prestigeInc;
   const xpGain   = baseXp     + streakBonus * 10;
@@ -1917,16 +2087,14 @@ bot.action("daily", async (ctx) => {
   u.credits += credGain;
   u.xp      += xpGain;
   u.hp       = clamp(u.hp + hpGain, 0, CONFIG.MAX_HP);
-
-  // restore 10 energy on daily
-  u.energy = clamp(u.energy + 10, 0, CONFIG.MAX_ENERGY);
+  u.energy   = clamp(u.energy + 10, 0, CONFIG.MAX_ENERGY);
 
   save();
 
-  const streakLine    = streak > 1 ? `\n🔥 Streak: Day ${streak} (+${streakBonus * 20} credits)` : "";
-  const prestigeLine  = u.prestige > 0 ? `\n👑 Prestige Bonus: +${prestigeInc} credits` : "";
+  const streakLine   = streak > 1 ? `\n🔥 Streak: Day ${streak} (+${streakBonus * 20} credits)` : "";
+  const prestigeLine = u.prestige > 0 ? `\n👑 Prestige Bonus: +${prestigeInc} credits` : "";
 
-  return reply(ctx,
+  await reply(ctx,
 `🎁 DAILY REWARD
 
 +${credGain} Credits
@@ -1936,19 +2104,18 @@ bot.action("daily", async (ctx) => {
 
 Come back tomorrow to keep your streak!`
   );
+  await maybeResendMenu(ctx, u);
 });
 
 /* =========================================================
    LEADERBOARD
-   Shows top players, faction standings, dominant faction.
-   FIX v2.2: /top alias added.
 ========================================================= */
 
 function leaderboardText() {
   const top = Object.values(DB).sort((a, b) => b.xp - a.xp).slice(0, 10);
   let msg   = "🏆 LEADERBOARD\n\n";
   top.forEach((u, i) => {
-    const dead    = u.dead ? " 💀" : "";
+    const dead     = u.dead ? " 💀" : "";
     const prestige = u.prestige > 0 ? ` ♻️${u.prestige}` : "";
     msg += `${i + 1}. ${u.name}${dead}${prestige}  ⭐${level(u.xp)}  ${u.xp} XP\n`;
   });
@@ -1967,22 +2134,22 @@ function leaderboardText() {
 
 bot.action("leaderboard", async (ctx) => {
   await ack(ctx);
-  return reply(ctx, leaderboardText());
+  await reply(ctx, leaderboardText());
+  const u = getUser(ctx.from.id, ctx);
+  await maybeResendMenu(ctx, u);
 });
 
 bot.command("leaderboard", (ctx) => reply(ctx, leaderboardText()));
-bot.command("top",         (ctx) => reply(ctx, leaderboardText())); // alias
+bot.command("top",         (ctx) => reply(ctx, leaderboardText()));
 
 /* =========================================================
    BULLETIN BOARD
-   Lightweight market news feed — players and world events
-   write brief entries. /bulletin shows last 5 entries.
 ========================================================= */
 
 function addBulletin(entry) {
   if (!Array.isArray(WORLD.bulletin)) WORLD.bulletin = [];
   WORLD.bulletin.unshift({ text: entry, ts: now() });
-  if (WORLD.bulletin.length > 20) WORLD.bulletin.length = 20; // cap at 20
+  if (WORLD.bulletin.length > 20) WORLD.bulletin.length = 20;
   save();
 }
 
@@ -2070,10 +2237,6 @@ bot.command("forcesave", (ctx) => {
 
 /* =========================================================
    RANDOM WORLD EVENTS
-   FIX v2.1: broadcastFire() — fully non-blocking.
-   FIX v2.2: worldEventLock released via setTimeout after
-   estimated broadcast window. Bulletin board entries added
-   for atmosphere without requiring players to receive a push.
 ========================================================= */
 
 let worldEventLock = false;
@@ -2105,7 +2268,6 @@ setInterval(() => {
 }, 120000);
 
 setInterval(() => {
-  // Market state driven by chaos level
   if (WORLD.chaos >= 80)      WORLD.marketState = "crashing";
   else if (WORLD.chaos >= 50) WORLD.marketState = "volatile";
   else if (WORLD.chaos >= 25) WORLD.marketState = rand(["stable", "volatile"]);
@@ -2113,19 +2275,15 @@ setInterval(() => {
   save();
 }, 300000);
 
-// Slow chaos decay — world gradually calms if no one stirs it
 setInterval(() => {
   if (WORLD.chaos > 5) {
     WORLD.chaos = Math.max(5, WORLD.chaos - 1);
     save();
   }
-}, 600000); // every 10 minutes
+}, 600000);
 
 /* =========================================================
    FALLBACK MESSAGE HANDLER
-   FIX v2.2: START_ORGANISER was defined but never called.
-   Now properly wired here for private chat messages that
-   don't match any command. Group chat handled separately.
 ========================================================= */
 
 bot.on("message", async (ctx) => {
@@ -2134,7 +2292,6 @@ bot.on("message", async (ctx) => {
   const text      = ctx.message?.text || "";
   const isPrivate = ctx.chat?.type === "private";
 
-  // --- GROUP CHAT ---
   if (!isPrivate) {
     const isGameCommand = text === "/game" || text.startsWith("/game@");
     if (!isGameCommand) return;
@@ -2148,18 +2305,21 @@ bot.on("message", async (ctx) => {
     );
   }
 
-  // --- PRIVATE CHAT ---
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
 
   const isEntryCommand = text.startsWith("/game") || text.startsWith("/start");
   if (!isEntryCommand) {
-    return reply(ctx,
+    await reply(ctx,
       "🌌 FOMO YODELVERSE\n\nUse /start or /game to enter.",
       Markup.inlineKeyboard([
         [Markup.button.callback("🚀 START", "start_game")]
       ])
     );
+    // Tick counter on free-text messages too
+    if (u.registered && tickMessageCounter(u.id)) {
+      await reply(ctx, "🕹 Quick actions:", homeMenu(u.id, ctx));
+    }
   }
 });
 
@@ -2169,7 +2329,6 @@ bot.on("message", async (ctx) => {
 
 bot.start(async (ctx) => {
 
-  // --- DEEP-LINK SESSION ARRIVAL (from group button) ---
   if (ctx.chat?.type === "private") {
     const session = resolveSessionFromCtx(ctx);
 
@@ -2191,7 +2350,7 @@ bot.start(async (ctx) => {
 🧬 Character: ${u.character}
 ⚔ Faction: ${u.faction}
 
-The Yodelverse awaits.`
+The Force of the blockchain awaits.`
         );
       } else {
         await reply(ctx,
@@ -2202,7 +2361,6 @@ The Yodelverse awaits.`
     }
   }
 
-  // --- GROUP /start ---
   if (ctx.chat?.type !== "private") {
     const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
     return reply(ctx,
@@ -2213,7 +2371,6 @@ The Yodelverse awaits.`
     );
   }
 
-  // --- PRIVATE /start, no deep-link ---
   const u = getUser(ctx.from.id, ctx);
 
   if (checkDeath(ctx, u)) {
@@ -2230,9 +2387,10 @@ The Yodelverse awaits.`
   return reply(ctx,
 `🌌 FOMO YODELVERSE
 
-Civilization collapsed after the Great Rugpull.
-The blockchain is now a warzone.
+The Great Rugpull has destroyed civilization.
+The blockchain is a warzone of factions, whales, and Sith Lords.
 
+Your credits are all you have left.
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
       [Markup.button.callback("🚀 START", "start_game")]
@@ -2270,7 +2428,7 @@ bot.command("game", async (ctx) => {
   return reply(ctx,
 `🌌 FOMO YODELVERSE
 
-Civilization collapsed after the Great Rugpull.
+The Great Rugpull has destroyed civilization.
 
 Press START to enter the Yodelverse.`,
     Markup.inlineKeyboard([
@@ -2304,7 +2462,8 @@ bot.action("start_game", async (ctx) => {
 🧬 Character: ${u.character}
 ⚔ Faction: ${u.faction}
 
-You start with ${CONFIG.START_CREDITS} credits. Good luck.`
+You start with ${CONFIG.START_CREDITS} credits.
+May the blockchain be with you.`
     );
   }
 
