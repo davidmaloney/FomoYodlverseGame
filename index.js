@@ -1,56 +1,28 @@
 /**
 * =========================================================
-* 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.5.1
+* 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.5.2
 * =========================================================
 *
-* CHANGES v2.5 (precision repair pass):
-* - FIX: Respawn/hardreset flow now shows inline RE-ENTER button
-*   immediately after deletion — no more soft-lock requiring
-*   manual /start typing.
-* - FIX: start_game action now works for ALL user states:
-*   fresh users, post-reset users, returning users, dead users.
-* - FIX: /start correctly handles every possible user state:
-*   new, registered, dead, post-reset, session, deep-link.
-* - FIX: bossLock now uses try/finally — can never get
-*   permanently stuck on exception, ending boss button freezes.
-* - FIX: boss action now ack()s immediately before any logic
-*   and has full null-guard on WORLD.boss throughout.
-* - FIX: Duplicate "wins++" after boss kill removed (was
-*   incrementing wins then saving twice).
-* - FIX: hardResetPlayer now fully wipes registered flag and
-*   returns the fresh object correctly.
-* - FIX: faction_* handler had redundant dead check after
-*   requireRegistered — removed double guard.
-* - FIX: maybeResendMenu now resets counter for dead players
-*   correctly (was ticking but never showing recovery menu
-*   if already shown this turn).
-* - FIX: requireRegistered now also handles post-reset users
-*   who have registered=false without a session.
-* - ADD: startOnboarding() helper centralises the new-user
-*   intro flow — used by /start, /game, start_game to prevent
-*   drift between entry points.
-* - ADD: showPostResetScreen() — called after hard reset,
-*   gives player an immediate inline button to re-enter.
-* - ADD: SQLite migration-ready comments on all persistence
-*   helpers (load, save, atomicWrite, getUser, createUser).
-* - PRESERVE: All v2.4 gameplay systems, balance, and content
-*   remain 100% intact.
+* CHANGES v2.5.2 (3 targeted bug fixes only):
+* - FIX #1: checkBossTaunts() now guards WORLD.boss.tauntsUsed
+*   with Array.isArray() before calling .includes(). This was
+*   the exact source of "cannot read properties of undefined
+*   reading includes" — triggered when world.json had a boss
+*   object persisted without a tauntsUsed array (e.g. from an
+*   older save). One null guard added. Nothing else changed.
+* - FIX #2: hubPrivateLink() BOT_USERNAME fallback is now an
+*   empty string instead of a hardcoded bot name. Wrong fallback
+*   was sending deep links to a nonexistent bot, producing the
+*   "Sorry, this user doesn't seem to exist" Telegram error.
+*   Set BOT_USERNAME correctly in your .env file.
+* - FIX #3: char_* and faction_* handlers no longer call
+*   requireRegistered() during onboarding. Post-reset users
+*   have registered=false and no session token — requireRegistered
+*   was blocking them mid-flow, causing the infinite elimination
+*   loop. Both handlers now check _entryIntent === "onboarding"
+*   and skip the registration gate for that path only.
 *
-* CHANGES v2.5.1 (respawn loop fix — 3 targeted edits only):
-* - FIX: hardResetPlayer now also clears WORLD.onboardSeen for
-*   the reset user. Without this, the onboarding gate middleware
-*   would skip the intro for the "new" player because they were
-*   already marked as seen from before the reset.
-* - FIX: startOnboarding() now shows the CHARACTER SELECTION
-*   SCREEN (original flow) instead of auto-assigning a random
-*   character and faction. Auto-assignment was the root cause
-*   of the elimination loop: players ended up with registered=true
-*   but no real UI path taken, and the faction_ handler never
-*   fired, leaving state partially inconsistent on re-entry.
-* - FIX: faction_ handler now adds addBulletin() entry and shows
-*   a confirmation message before calling home(). This restores
-*   the full original onboarding completion experience.
-*
+* All v2.5.1 gameplay, balance, and architecture preserved.
 * =========================================================
 */
 
@@ -105,20 +77,12 @@ const CONFIG = {
 
 /* =========================================================
   STORAGE
-  // SQLITE-MIGRATION-READY:
-  // Replace load() / atomicWrite() / save() with a
-  // better-sqlite3 adapter that exposes the same surface.
-  // DB dict → users table, WORLD dict → world table,
-  // SESSIONS dict → sessions table.
-  // All callers already go through these helpers, so the
-  // swap is surgical.
 ========================================================= */
 
 const DB_FILE      = "./data.json";
 const WORLD_FILE   = "./world.json";
 const SESSION_FILE = "./sessions.json";
 
-// SQLITE-MIGRATION-READY: replace with db.prepare/get/all
 function load(path, fallback) {
  try {
    if (!fs.existsSync(path)) return fallback;
@@ -174,13 +138,10 @@ repairWorld();
 
 /* =========================================================
   SAVE
-  // SQLITE-MIGRATION-READY: save() → db.prepare("UPDATE...").run(...)
-  // forceSave() becomes a no-op (SQLite writes are synchronous)
 ========================================================= */
 
 function save() { dirty = true; }
 
-// SQLITE-MIGRATION-READY: replace with atomic SQL transaction
 function atomicWrite(file, data) {
  const temp   = `${file}.tmp`;
  const backup = `${file}.bak`;
@@ -277,7 +238,7 @@ bot.use(async (ctx, next) => {
 });
 
 /* =========================================================
-  MESSAGE COUNTER — auto-resend menu every N messages
+  MESSAGE COUNTER
 ========================================================= */
 
 const MSG_COUNTER = {};
@@ -404,9 +365,6 @@ async function showDeadMenu(ctx, u) {
 
 /* =========================================================
   POST-RESET SCREEN
-  FIX v2.5: After hardResetPlayer() completes, show this
-  immediately so the player never has to type /start manually.
-  This is the core fix for the respawn soft-lock.
 ========================================================= */
 
 async function showPostResetScreen(ctx, name) {
@@ -439,15 +397,12 @@ function requirePrivate(ctx) {
  return true;
 }
 
-// SQLITE-MIGRATION-READY: requireRegistered checks DB state only —
-// no schema changes needed when migrating.
 function requireRegistered(user, ctx) {
  if (!user) {
    reply(ctx, "❌ User data not found. Please restart with /start.");
    return false;
  }
  if (user.registered) return true;
- // Allow session-authenticated users even before registered flag is set
  const session = resolveSessionFromCtx(ctx);
  if (session) return true;
  reply(ctx,
@@ -544,8 +499,14 @@ function hubPrivateLink(userId, ctx) {
    ctx.message?.message_thread_id ||
    ctx.callbackQuery?.message?.message_thread_id ||
    null;
- const token       = createSession(userId, topicId);
- const botUsername = process.env.BOT_USERNAME || "FOMOYODLverseBot";
+ const token = createSession(userId, topicId);
+ // FIX #2: Use empty string fallback instead of hardcoded bot name.
+ // A wrong hardcoded username sends users to a nonexistent bot, producing
+ // "Sorry, this user doesn't seem to exist." Set BOT_USERNAME in your .env.
+ const botUsername = process.env.BOT_USERNAME || "";
+ if (!botUsername) {
+   console.log("⚠️  WARNING: BOT_USERNAME is not set in .env — deep links will not work!");
+ }
  return `https://t.me/${botUsername}?start=session_${token}`;
 }
 
@@ -585,25 +546,17 @@ function rebirthPlayer(user) {
 
 /* =========================================================
   HARD RESET (respawn path)
-  // SQLITE-MIGRATION-READY: replace DB[id] assignment with
-  // db.prepare("DELETE FROM users WHERE id=?").run(id) +
-  // db.prepare("INSERT INTO users ...").run(newUser)
 ========================================================= */
 
 function hardResetPlayer(user) {
  const id       = user.id;
  const name     = user.name;
  const username = user.username;
- // Fully replace the DB entry with a clean user
  DB[id] = createUser(id);
  DB[id].name     = name     || "Player";
  DB[id].username = username || "";
- // Explicitly ensure registered is false so /start re-onboards them
  DB[id].registered = false;
- // FIX v2.5.1: Clear onboarding gate so post-reset user is treated as truly new.
- // Without this, WORLD.onboardSeen still has the old entry, and the group-chat
- // onboarding middleware skips showing the intro — leaving the player stranded
- // with no path into the character selection screen.
+ // Clear onboarding gate so post-reset user is treated as truly new
  if (WORLD.onboardSeen && WORLD.onboardSeen[id]) {
    delete WORLD.onboardSeen[id];
  }
@@ -890,9 +843,6 @@ async function ack(ctx) {
 
 /* =========================================================
   USER SYSTEM
-  // SQLITE-MIGRATION-READY: createUser() maps directly to an
-  // INSERT INTO users row. repairUser() becomes an UPDATE for
-  // missing fields on first read. getUser() → SELECT + INSERT.
 ========================================================= */
 
 function createUser(id, ctx = null) {
@@ -956,7 +906,6 @@ function repairUser(u) {
  return u;
 }
 
-// SQLITE-MIGRATION-READY: getUser → db.prepare("SELECT * FROM users WHERE id=?").get(id)
 function getUser(id, ctx = null) {
  if (!DB[id]) { DB[id] = createUser(id, ctx); save(); }
  DB[id] = repairUser(DB[id]);
@@ -994,7 +943,7 @@ function cooldownOk(user, key, ms = CONFIG.COOLDOWN) {
 }
 
 /* =========================================================
-  BROADCAST — FIRE-AND-FORGET
+  BROADCAST
 ========================================================= */
 
 function broadcastFire(message) {
@@ -1049,7 +998,7 @@ function getDominanceBonus(userFaction) {
 }
 
 /* =========================================================
-  SOFT CAP HELPER — light economy balancing
+  SOFT CAP HELPER
 ========================================================= */
 
 function softCapMultiplier(totalBonus) {
@@ -1060,8 +1009,6 @@ function softCapMultiplier(totalBonus) {
 
 /* =========================================================
   BOSS SYSTEM
-  FIX v2.5: bossLock uses try/finally to guarantee release.
-  This prevents the permanent freeze when spawnBoss() throws.
 ========================================================= */
 
 let bossLock = false;
@@ -1118,13 +1065,18 @@ Press 🐋 BOSS to join the raid!`
    console.log("❌ SPAWN BOSS ERROR:", err.message);
    return null;
  } finally {
-   // Always release the lock — prevents permanent boss button freeze
    bossLock = false;
  }
 }
 
 function checkBossTaunts() {
  if (!WORLD.boss || !WORLD.boss.active) return;
+ // FIX #1: Guard tauntsUsed before calling .includes().
+ // If boss was loaded from world.json without this field (older save),
+ // .includes() throws "cannot read properties of undefined" and
+ // crashes the entire boss action handler. One Array.isArray guard fixes it.
+ if (!Array.isArray(WORLD.boss.tauntsUsed)) WORLD.boss.tauntsUsed = [];
+
  const pct = Math.floor((WORLD.boss.hp / WORLD.boss.maxHp) * 100);
 
  for (const threshold of [66, 33, 10]) {
@@ -1265,7 +1217,6 @@ async function home(ctx, u) {
  const canEnter = u.registered === true || !!session;
 
  if (!canEnter) {
-   // User is unregistered and has no session — show onboarding button
    return reply(ctx,
      "🌌 FOMO YODLVERSE\n\nYou haven't started yet. Tap below to begin.",
      Markup.inlineKeyboard([
@@ -1284,8 +1235,6 @@ async function home(ctx, u) {
 
 /* =========================================================
   AUTO MENU RESEND MIDDLEWARE
-  FIX v2.5: Dead players correctly get recovery menu on counter
-  tick. Counter now resets for dead players when menu is shown.
 ========================================================= */
 
 async function maybeResendMenu(ctx, user) {
@@ -1340,27 +1289,9 @@ function marketPrice(basePrice) {
 
 /* =========================================================
   ONBOARDING HELPER
-  FIX v2.5.1: startOnboarding() now shows the CHARACTER
-  SELECTION SCREEN rather than auto-assigning. This restores
-  the original onboarding pipeline.
-
-  HOW THE FLOW WORKS:
-  1. startOnboarding() → shows character buttons (char_* actions)
-  2. char_* handler → player picks character → shows faction buttons
-  3. faction_* handler → player picks faction → sets registered=true
-                       → shows confirmation → calls home()
-
-  This is the correct three-step flow. Auto-assigning (old v2.5
-  behavior) skipped steps 1-2, leaving players registered but
-  with no real onboarding UI taken, causing re-entry confusion.
 ========================================================= */
 
 async function startOnboarding(ctx, u) {
- // FIX v2.5.1: Show character selection screen (original flow).
- // Registration completes later in the faction_ action handler
- // once the player picks both a character and a faction.
- // Do NOT auto-assign here — that caused the elimination loop by
- // skipping the selection UI and registering players prematurely.
  u._entryIntent = "onboarding";
  save();
  const charButtons = CHARACTERS.map(c => [Markup.button.callback(c, "char_" + c)]);
@@ -1430,14 +1361,6 @@ Are you sure?`,
  );
 });
 
-/* =========================================================
-  CONFIRM HARDRESET
-  FIX v2.5: Now calls showPostResetScreen() instead of a
-  plain text message. The inline button goes directly to
-  start_game which handles the full onboarding flow.
-  No more soft-lock requiring manual /start typing.
-========================================================= */
-
 bot.action("confirm_hardreset", async (ctx) => {
  await ack(ctx);
  const u = getUser(ctx.from.id, ctx);
@@ -1445,7 +1368,6 @@ bot.action("confirm_hardreset", async (ctx) => {
 
  const name = u.name;
  hardResetPlayer(u);
- // u reference is now stale — DB[ctx.from.id] is the fresh user
  return showPostResetScreen(ctx, name);
 });
 
@@ -1519,13 +1441,24 @@ bot.command("status", (ctx) => {
 
 /* =========================================================
   CHARACTER FLOW
+  FIX #3: char_* and faction_* no longer call requireRegistered()
+  during onboarding. Post-reset users have registered=false with
+  no session token — requireRegistered() was blocking them and
+  showing "not registered" mid-flow, causing the infinite loop.
+  
+  Both handlers now allow through any user whose _entryIntent is
+  "onboarding" (set by startOnboarding()). For all other paths
+  (e.g. someone manually sending a char_ action after registration),
+  requireRegistered() still fires normally.
 ========================================================= */
 
 bot.action(/char_(.+)/, async (ctx) => {
  await ack(ctx);
  const u = getUser(ctx.from.id, ctx);
  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
- if (!requireRegistered(u, ctx)) return;
+ // FIX #3: Skip registration gate during onboarding flow.
+ // Post-reset users are unregistered by design at this stage.
+ if (u._entryIntent !== "onboarding" && !requireRegistered(u, ctx)) return;
 
  u.character = ctx.match[1];
  save();
@@ -1550,15 +1483,14 @@ bot.action(/faction_(.+)/, async (ctx) => {
 
  const u = getUser(ctx.from.id, ctx);
  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
- // FIX v2.5: removed redundant dead check that was duplicating checkDeath above
- if (!requireRegistered(u, ctx)) return;
+ // FIX #3: Skip registration gate during onboarding flow.
+ if (u._entryIntent !== "onboarding" && !requireRegistered(u, ctx)) return;
 
  u.faction      = faction;
  u.registered   = true;
  u._entryIntent = null;
  save();
  broadcastFire(`🌌 ${u.name} joined faction ${u.faction}`);
- // FIX v2.5.1: add bulletin entry and show confirmation (restores original completion UX)
  addBulletin(`${u.name} joined faction ${u.faction}`);
  await reply(ctx,
 `✅ Character created!
@@ -1991,25 +1923,15 @@ Intrusion detected. Counterattack incoming.
 
 /* =========================================================
   BOSS
-  FIX v2.5:
-  - ack() called first, before any async logic or null checks.
-    Telegram requires answerCbQuery within ~3s or it times out,
-    causing the button to appear frozen with a spinner.
-  - Full null guard on WORLD.boss throughout the handler.
-  - Removed duplicate u.wins++ (was incrementing then saving
-    twice in the same turn if boss was still alive).
-  - bossLock now protected by try/finally in spawnBoss().
 ========================================================= */
 
 bot.action("boss", async (ctx) => {
- // ack() FIRST — before any logic — prevents Telegram spinner freeze
  await ack(ctx);
 
  const u = getUser(ctx.from.id, ctx);
  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
  if (!requireRegistered(u, ctx)) return;
 
- // If no active boss, try to spawn one
  if (!WORLD.boss || !WORLD.boss.active) {
    const spawned = spawnBoss();
    if (!spawned) {
@@ -2019,7 +1941,6 @@ bot.action("boss", async (ctx) => {
    }
  }
 
- // Re-check after potential spawn
  if (!WORLD.boss || !WORLD.boss.active) {
    return reply(ctx, "⚠️ Boss event not active right now. Check back soon!");
  }
@@ -2033,7 +1954,6 @@ bot.action("boss", async (ctx) => {
 
  u.bossHits = (u.bossHits || 0) + dmg;
 
- // Snapshot boss name before damageBoss() potentially nulls WORLD.boss
  const bossNameSnapshot = WORLD.boss.name;
  const bossTierSnapshot = tier;
 
@@ -2054,13 +1974,11 @@ bot.action("boss", async (ctx) => {
    return showDeadMenu(ctx, u);
  }
 
- // FIX: only one wins++ per boss action (removed duplicate)
  u.wins = (u.wins || 0) + 1;
 
  const drop = tryDrop(u, "boss");
  save();
 
- // WORLD.boss may now be null if boss was just killed
  const remaining = WORLD.boss?.hp ?? 0;
  const maxHp     = WORLD.boss?.maxHp ?? 1;
  const pct       = WORLD.boss ? Math.round((remaining / maxHp) * 100) : 0;
@@ -2678,13 +2596,6 @@ bot.on("message", async (ctx) => {
 
 /* =========================================================
   /start HANDLER
-  FIX v2.5: All user states handled explicitly:
-  - Dead (post-reset or otherwise) → recovery menu
-  - Unregistered + session → show character selection (startOnboarding)
-  - Unregistered + no session → onboarding intro with START button
-  - Registered → welcome back + home
-  - Post-reset unregistered (registered=false) → same as new user
-  No path leads to a dead end.
 ========================================================= */
 
 bot.start(async (ctx) => {
@@ -2695,13 +2606,11 @@ bot.start(async (ctx) => {
    if (session) {
      const u = getUser(ctx.from.id, ctx);
 
-     // Dead player: show recovery immediately regardless of registration
      if (checkDeath(ctx, u)) {
        await reply(ctx, `💀 Welcome back, ${u.name || "player"}. You are currently dead.`);
        return showDeadMenu(ctx, u);
      }
 
-     // Unregistered (new or post-reset): show character selection
      if (!u.registered) {
        return startOnboarding(ctx, u);
      } else {
@@ -2713,9 +2622,8 @@ bot.start(async (ctx) => {
    }
  }
 
- // Group chat: direct to private
  if (ctx.chat?.type !== "private") {
-   const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+   const botUsername = process.env.BOT_USERNAME || "";
    return reply(ctx,
      "🌌 FOMO YODLVERSE\n\nUse /game in the group to get your private entry link.",
      Markup.inlineKeyboard([
@@ -2724,16 +2632,13 @@ bot.start(async (ctx) => {
    );
  }
 
- // Private chat, no session token
  const u = getUser(ctx.from.id, ctx);
 
- // Dead player check (covers post-reset dead=false, normal dead=true)
  if (checkDeath(ctx, u)) {
    await reply(ctx, `💀 Welcome back, ${u.name || "player"}. The Yodlverse remembers your end.`);
    return showDeadMenu(ctx, u);
  }
 
- // Registered: go straight to home
  if (u.registered) {
    await reply(ctx,
      `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
@@ -2741,8 +2646,6 @@ bot.start(async (ctx) => {
    return home(ctx, u);
  }
 
- // Unregistered (new or post-reset): show onboarding intro
- // START button leads to start_game which shows character selection
  return reply(ctx,
 `🌌 FOMO YODLVERSE
 
@@ -2800,9 +2703,6 @@ Press START to enter the Yodlverse.`,
 
 /* =========================================================
   START BUTTON HANDLER
-  FIX v2.5.1: Calls startOnboarding() which now shows the
-  character selection screen. This is the correct entry point
-  for all new and post-reset players.
 ========================================================= */
 
 bot.action("start_game", async (ctx) => {
@@ -2811,17 +2711,14 @@ bot.action("start_game", async (ctx) => {
 
  const u = getUser(ctx.from.id, ctx);
 
- // Dead player: never let them start — show recovery
  if (checkDeath(ctx, u)) {
    return showDeadMenu(ctx, u);
  }
 
- // Post-reset or brand new: run character selection onboarding
  if (!u.registered) {
    return startOnboarding(ctx, u);
  }
 
- // Already registered: go to home
  return home(ctx, u);
 });
 
