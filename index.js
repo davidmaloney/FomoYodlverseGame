@@ -1933,35 +1933,921 @@ ${u.name} fought for ${u.faction}
 ========================================================= */
 
 bot.action("hack", async (ctx) => {
-  await ack(ctx);
-  if (!requirePrivate(ctx)) return;
-  const u = getUser(ctx.from.id, ctx);
-  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
-  if (!requireRegistered(u, ctx)) return;
-  if (!cooldownOk(u, "hack", 9000)) return reply(ctx, "⏳ Hacking cooldown active");
+ await ack(ctx);
+ if (!requirePrivate(ctx)) return;
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ if (!cooldownOk(u, "hack", 9000)) return reply(ctx, "⏳ Hacking cooldown active");
 
-  applyEnergyRegen(u);
-  if (!spendEnergy(u, CONFIG.ENERGY_COSTS.hack, ctx)) return;
+ applyEnergyRegen(u);
+ if (!spendEnergy(u, CONFIG.ENERGY_COSTS.hack, ctx)) return;
 
-  const available = HACK_TARGETS.filter(t => t.hackReq <= u.hackingLevel);
-  if (!available.length) {
-    return reply(ctx, "❌ No available targets for your hacking level.");
-  }
+ const available = HACK_TARGETS.filter(t => t.hackReq <= u.hackingLevel);
+ if (!available.length) {
+   return reply(ctx, "❌ No available targets for your hacking level.");
+ }
 
-  const target = Math.random() < 0.6
-    ? available[available.length - 1]
-    : rand(available);
+ const target = Math.random() < 0.6
+   ? available[available.length - 1]
+   : rand(available);
 
-  const factionBonus = FACTION_BONUSES[u.faction]?.hackBonus || 0;
-  const domBonus     = getDominanceBonus(u.faction);
-  const repDiscount  = Math.min(0.12, u.reputation * 0.006);
-  const rawBonus     = factionBonus + domBonus;
-  const cappedBonus  = softCapMultiplier(rawBonus);
-  const risk         = Math.max(0.10, target.risk - cappedBonus - repDiscount + WORLD.chaos * 0.004);
+ const factionBonus = FACTION_BONUSES[u.faction]?.hackBonus || 0;
+ const domBonus     = getDominanceBonus(u.faction);
+ const repDiscount  = Math.min(0.12, u.reputation * 0.006);
+ const rawBonus     = factionBonus + domBonus;
+ const cappedBonus  = softCapMultiplier(rawBonus);
+ const risk         = Math.max(0.10, target.risk - cappedBonus - repDiscount + WORLD.chaos * 0.004);
 
-  if (Math.random() < risk) {
-    const damage = 10 + Math.floor(Math.random() * 20);
-    const loss   = 10 + Math.floor(Math.random() * 30);
-    u.hp         = Math.max(0, u.hp - damage);
-    u.credits    = clamp(u.credits - loss, 0, 999999);
- 
+ if (Math.random() < risk) {
+   const damage = 10 + Math.floor(Math.random() * 20);
+   const loss   = 10 + Math.floor(Math.random() * 30);
+   u.hp         = Math.max(0, u.hp - damage);
+   u.credits    = clamp(u.credits - loss, 0, 999999);
+   u.losses     = (u.losses || 0) + 1;
+   if (u.hp <= 0) { u.dead = true; u.deathTime = now(); }
+   addChaos(1);
+   save();
+   if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+   await reply(ctx,
+`🚫 HACK FAILED — ${target.name}
+
+Intrusion detected. Counterattack incoming.
+-${damage} HP  -${loss} Credits
+⚡ Energy: ${u.energy}
+🔥 Chaos ticked up${contextualYodelBot(u, false)}`
+   );
+   await maybeResendMenu(ctx, u);
+   return;
+ }
+
+ const mktMult  = WORLD.marketState === "bullish" ? 1.15 : 1.0;
+ const xpGain   = Math.floor(target.xp      * (1 + cappedBonus));
+ const credGain = Math.floor(target.credits * mktMult * (1 + cappedBonus));
+
+ u.xp         += xpGain;
+ u.credits    += credGain;
+ u.reputation += 1;
+ u.wins        = (u.wins || 0) + 1;
+ addFactionPower(u.faction, xpGain);
+ addChaos(target.chaos);
+
+ const drop        = tryDrop(u, "hack");
+ const factionLine = getFactionFlavour(u.faction);
+ save();
+
+ await reply(ctx,
+`💻 HACK SUCCESSFUL — ${target.name}
+
++${xpGain} XP  +${credGain} Credits  +1 Rep
+💻 Hacking Level: ${u.hackingLevel}
+⚡ Energy: ${u.energy}
+🔥 Chaos: ${WORLD.chaos}${factionLine}${drop}${contextualYodelBot(u, true)}`
+ );
+ await maybeResendMenu(ctx, u);
+});
+
+/* =========================================================
+  BOSS
+  FIX v2.5:
+  - ack() called first, before any async logic or null checks.
+    Telegram requires answerCbQuery within ~3s or it times out,
+    causing the button to appear frozen with a spinner.
+  - Full null guard on WORLD.boss throughout the handler.
+  - Removed duplicate u.wins++ (was incrementing then saving
+    twice in the same turn if boss was still alive).
+  - bossLock now protected by try/finally in spawnBoss().
+========================================================= */
+
+bot.action("boss", async (ctx) => {
+ // ack() FIRST — before any logic — prevents Telegram spinner freeze
+ await ack(ctx);
+
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+
+ // If no active boss, try to spawn one
+ if (!WORLD.boss || !WORLD.boss.active) {
+   const spawned = spawnBoss();
+   if (!spawned) {
+     return reply(ctx,
+       "⚠️ No boss available right now. The Yodlverse is peaceful... temporarily.\n\nTry again in a moment."
+     );
+   }
+ }
+
+ // Re-check after potential spawn
+ if (!WORLD.boss || !WORLD.boss.active) {
+   return reply(ctx, "⚠️ Boss event not active right now. Check back soon!");
+ }
+
+ applyEnergyRegen(u);
+ if (!spendEnergy(u, CONFIG.ENERGY_COSTS.boss, ctx)) return;
+
+ const tier   = WORLD.boss.tier || 1;
+ const dmg    = 25 + Math.floor(Math.random() * 50) + (level(u.xp) * 2);
+ const damage = (8 + Math.floor(Math.random() * 10)) * tier;
+
+ u.bossHits = (u.bossHits || 0) + dmg;
+
+ // Snapshot boss name before damageBoss() potentially nulls WORLD.boss
+ const bossNameSnapshot = WORLD.boss.name;
+ const bossTierSnapshot = tier;
+
+ const bossReward = damageBoss(String(u.id), dmg);
+
+ u.xp += 10 + bossTierSnapshot * 5;
+ u.hp  = Math.max(0, u.hp - damage);
+
+ if (bossReward > 0) {
+   u.credits += bossReward;
+   u.bossHits = 0;
+ }
+
+ if (u.hp <= 0) {
+   u.dead      = true;
+   u.deathTime = now();
+   save();
+   return showDeadMenu(ctx, u);
+ }
+
+ // FIX: only one wins++ per boss action (removed duplicate)
+ u.wins = (u.wins || 0) + 1;
+
+ const drop = tryDrop(u, "boss");
+ save();
+
+ // WORLD.boss may now be null if boss was just killed
+ const remaining = WORLD.boss?.hp ?? 0;
+ const maxHp     = WORLD.boss?.maxHp ?? 1;
+ const pct       = WORLD.boss ? Math.round((remaining / maxHp) * 100) : 0;
+ const bossLine  = WORLD.boss
+   ? `❤️ Boss HP: ${remaining} (${pct}%)`
+   : `💥 BOSS DEFEATED! +${bossReward} bonus credits`;
+
+ await reply(ctx,
+`🐋 RAID ATTACK — ${bossNameSnapshot}
+
+💥 Damage dealt: ${dmg}
+-${damage} HP received
+⚡ Energy: ${u.energy}
+${bossLine}${drop}${contextualYodelBot(u, true)}`
+ );
+ await maybeResendMenu(ctx, u);
+});
+
+/* =========================================================
+  INVENTORY
+========================================================= */
+
+const STARS = { common: "⚪", rare: "🔵", epic: "🟣", legendary: "🟡" };
+const INV_PAGE_SIZE = 10;
+
+function inventoryPage(u, page = 0) {
+ if (!u.inventory.length) {
+   return {
+     text: `🎒 INVENTORY — Empty\n\nGo fight, mine, commit crimes, hack, or raid bosses to earn items!`,
+     keyboard: null
+   };
+ }
+
+ const totalPages = Math.ceil(u.inventory.length / INV_PAGE_SIZE);
+ const start      = page * INV_PAGE_SIZE;
+ const pageItems  = u.inventory.slice(start, start + INV_PAGE_SIZE);
+
+ let totalPower = u.inventory.reduce((s, i) => s + (i?.power || 0), 0);
+ let msg = `🎒 INVENTORY (${u.inventory.length} items | ⚡ Total Power: ${totalPower})\n`;
+ if (totalPages > 1) msg += `Page ${page + 1}/${totalPages}\n`;
+ msg += "\n";
+
+ const rows = [];
+
+ pageItems.forEach((item, i) => {
+   const realIdx = start + i;
+   if (typeof item === "string") {
+     msg += `${realIdx + 1}. ${item}\n`;
+     return;
+   }
+   const name    = item?.name   || "Unknown";
+   const rarity  = item?.rarity || "common";
+   const power   = item?.power  || 0;
+   const hp      = item?.hpBonus     || 0;
+   const en      = item?.energyBonus || 0;
+   const star    = STARS[rarity] || "⚪";
+   const sellVal = ITEM_SELL_VALUES[rarity] || 10;
+
+   msg += `${realIdx + 1}. ${star} ${name}\n`;
+   msg += `   ${rarity} | PWR ${power} | +${hp}HP +${en}⚡ | 💰${sellVal}cr\n`;
+
+   rows.push([
+     Markup.button.callback(`✅ USE #${realIdx + 1}`,  `inv_use_${realIdx}`),
+     Markup.button.callback(`💰 SELL #${realIdx + 1}`, `inv_sell_${realIdx}`)
+   ]);
+ });
+
+ const navRow = [];
+ if (page > 0)               navRow.push(Markup.button.callback("◀ PREV", `inv_page_${page - 1}`));
+ if (page < totalPages - 1)  navRow.push(Markup.button.callback("▶ NEXT", `inv_page_${page + 1}`));
+ if (navRow.length) rows.push(navRow);
+
+ return { text: msg.trim(), keyboard: Markup.inlineKeyboard(rows) };
+}
+
+bot.action("inventory", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+
+ const { text, keyboard } = inventoryPage(u, 0);
+ await reply(ctx, text, keyboard || {});
+ await maybeResendMenu(ctx, u);
+});
+
+bot.action(/inv_page_(\d+)/, async (ctx) => {
+ await ack(ctx);
+ const u    = getUser(ctx.from.id, ctx);
+ const page = parseInt(ctx.match[1]);
+ if (!u || isNaN(page)) return;
+ const { text, keyboard } = inventoryPage(u, page);
+ await reply(ctx, text, keyboard || {});
+});
+
+bot.action(/inv_use_(\d+)/, async (ctx) => {
+ await ack(ctx);
+ const u   = getUser(ctx.from.id, ctx);
+ const idx = parseInt(ctx.match[1]);
+
+ if (!u || isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+   return reply(ctx, "❌ Item not found. Your inventory may have changed.");
+ }
+
+ const item = u.inventory[idx];
+ if (!item || typeof item === "string") return reply(ctx, "❌ Cannot use this item.");
+
+ const hpGain     = item.hpBonus     || 0;
+ const energyGain = item.energyBonus || 0;
+
+ if (hpGain === 0 && energyGain === 0) {
+   return reply(ctx, `⚠️ ${item.name} has no usable effect. Try selling it instead.`);
+ }
+
+ u.hp     = clamp(u.hp     + hpGain,     0, CONFIG.MAX_HP);
+ u.energy = clamp(u.energy + energyGain, 0, CONFIG.MAX_ENERGY);
+ u.inventory.splice(idx, 1);
+ save();
+
+ return reply(ctx,
+`✅ Used: ${item.name}
+
++${hpGain} HP  +${energyGain} Energy
+❤️ HP: ${u.hp}/${CONFIG.MAX_HP}  ⚡ Energy: ${u.energy}/${CONFIG.MAX_ENERGY}`
+ );
+});
+
+bot.action(/inv_sell_(\d+)/, async (ctx) => {
+ await ack(ctx);
+ const u   = getUser(ctx.from.id, ctx);
+ const idx = parseInt(ctx.match[1]);
+
+ if (!u || isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+   return reply(ctx, "❌ Item not found. Your inventory may have changed.");
+ }
+
+ const item = u.inventory[idx];
+ if (!item || typeof item === "string") return reply(ctx, "❌ Cannot sell this item.");
+
+ const value = ITEM_SELL_VALUES[item.rarity] || 10;
+ u.credits  += value;
+ u.inventory.splice(idx, 1);
+ save();
+
+ return reply(ctx,
+`💰 SOLD: ${item.name}
+
++${value} Credits
+💰 Total Credits: ${u.credits}`
+ );
+});
+
+bot.command("use", async (ctx) => {
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return;
+ if (!u.registered) return reply(ctx, "❌ Not registered.");
+
+ const parts = ctx.message.text.split(" ");
+ const idx   = parseInt(parts[1]) - 1;
+
+ if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+   return reply(ctx, `❌ Invalid item number.\n\nUse 🎒 INVENTORY to see your items with tap-to-use buttons.`);
+ }
+
+ const item = u.inventory[idx];
+ if (!item || typeof item === "string") return reply(ctx, "❌ Cannot use this item.");
+
+ const hpGain     = item.hpBonus     || 0;
+ const energyGain = item.energyBonus || 0;
+
+ if (hpGain === 0 && energyGain === 0) {
+   return reply(ctx, `⚠️ ${item.name} has no usable effect. Try /sell ${idx + 1} instead.`);
+ }
+
+ u.hp     = clamp(u.hp     + hpGain,     0, CONFIG.MAX_HP);
+ u.energy = clamp(u.energy + energyGain, 0, CONFIG.MAX_ENERGY);
+ u.inventory.splice(idx, 1);
+ save();
+
+ return reply(ctx,
+`✅ Used: ${item.name}
+
++${hpGain} HP  +${energyGain} Energy
+❤️ HP: ${u.hp}/${CONFIG.MAX_HP}  ⚡ Energy: ${u.energy}/${CONFIG.MAX_ENERGY}`
+ );
+});
+
+bot.command("sell", async (ctx) => {
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return;
+ if (!u.registered) return reply(ctx, "❌ Not registered.");
+
+ const parts = ctx.message.text.split(" ");
+ const idx   = parseInt(parts[1]) - 1;
+
+ if (isNaN(idx) || idx < 0 || idx >= u.inventory.length) {
+   return reply(ctx, `❌ Invalid item number.\n\nUse 🎒 INVENTORY to see your items with tap-to-sell buttons.`);
+ }
+
+ const item = u.inventory[idx];
+ if (!item || typeof item === "string") return reply(ctx, "❌ Cannot sell this item.");
+
+ const value = ITEM_SELL_VALUES[item.rarity] || 10;
+ u.credits  += value;
+ u.inventory.splice(idx, 1);
+ save();
+
+ return reply(ctx,
+`💰 SOLD: ${item.name}
+
++${value} Credits
+💰 Total Credits: ${u.credits}`
+ );
+});
+
+/* =========================================================
+  MARKET
+========================================================= */
+
+bot.action("market", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+
+ const energyPrice  = marketPrice(50);
+ const armorPrice   = marketPrice(100);
+ const drillPrice   = marketPrice(250);
+ const homePrice    = marketPrice(500);
+ const cyberdeckPrc = marketPrice(200);
+
+ const dominant     = getDominantFaction();
+ const marketComment = dominant ? rand(FACTION_FLAVOUR[dominant] || []) : "";
+
+ await reply(ctx,
+`🏪 BLACK MARKET
+
+Market: ${WORLD.marketState.toUpperCase()} 🔥 Chaos: ${WORLD.chaos}
+${marketComment ? `\n_${marketComment}_\n` : ""}
+⚡ Energy Cell       — ${energyPrice} credits
+🛡 Nano Armor        — ${armorPrice} credits
+⛏ Quantum Drill     — ${drillPrice} credits
+💻 Cyberdeck Upgrade — ${cyberdeckPrc} credits
+🏠 Luxury Apartment  — ${homePrice} credits
+
+⚠️ Prices fluctuate with market state and chaos.`,
+   Markup.inlineKeyboard([
+     [Markup.button.callback("⚡ Buy Energy",     "buy_energy")],
+     [Markup.button.callback("🛡 Buy Armor",      "buy_armor")],
+     [Markup.button.callback("⛏ Buy Drill",       "buy_drill")],
+     [Markup.button.callback("💻 Buy Cyberdeck",  "buy_cyberdeck")],
+     [Markup.button.callback("🏠 Buy Apartment",  "buy_home")]
+   ])
+ );
+ await maybeResendMenu(ctx, u);
+});
+
+bot.action("buy_energy", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ const price = marketPrice(50);
+ if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
+ u.credits -= price;
+ u.energy   = clamp(u.energy + 25, 0, CONFIG.MAX_ENERGY);
+ save();
+ return reply(ctx, `⚡ Energy restored to ${u.energy}/${CONFIG.MAX_ENERGY}`);
+});
+
+bot.action("buy_armor", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ const price = marketPrice(100);
+ if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
+ u.credits -= price;
+ u.hp       = clamp(u.hp + 25, 0, CONFIG.MAX_HP);
+ save();
+ return reply(ctx, `🛡 Nano Armor equipped — HP: ${u.hp}/${CONFIG.MAX_HP}`);
+});
+
+bot.action("buy_drill", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ const price = marketPrice(250);
+ if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
+ u.credits     -= price;
+ u.miningLevel += 1;
+ save();
+ return reply(ctx, `⛏ Mining upgraded to Level ${u.miningLevel}`);
+});
+
+bot.action("buy_cyberdeck", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ const price = marketPrice(200);
+ if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
+ u.credits      -= price;
+ u.hackingLevel += 1;
+ save();
+ return reply(ctx, `💻 Hacking upgraded to Level ${u.hackingLevel}\n\nNew targets unlocked — use 💻 HACK`);
+});
+
+bot.action("buy_home", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+ const price = marketPrice(500);
+ if (u.credits < price) return reply(ctx, `❌ Not enough credits (need ${price})`);
+ u.credits   -= price;
+ u.apartment  = "Luxury Sky Apartment";
+ save();
+ return reply(ctx, "🏠 Apartment upgraded to Luxury Sky Apartment");
+});
+
+/* =========================================================
+  DAILY
+========================================================= */
+
+bot.action("daily", async (ctx) => {
+ await ack(ctx);
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ if (!requireRegistered(u, ctx)) return;
+
+ if (now() - u.lastDaily < CONFIG.DAILY_COOLDOWN) {
+   const remaining = Math.ceil((CONFIG.DAILY_COOLDOWN - (now() - u.lastDaily)) / 3600000);
+   return reply(ctx, `⏳ Daily already claimed.\n\nCome back in ~${remaining}h`);
+ }
+
+ const today    = new Date().toISOString().slice(0, 10);
+ const lastDate = u.lastDailyDate || "";
+ const dayDiff  = lastDate
+   ? Math.floor((now() - u.lastDaily) / 86400000)
+   : 999;
+
+ if (dayDiff <= 2) {
+   u.dailyStreak = (u.dailyStreak || 0) + 1;
+ } else {
+   u.dailyStreak = 1;
+ }
+
+ u.lastDailyDate = today;
+ u.lastDaily     = now();
+
+ const streak      = u.dailyStreak || 1;
+ const streakBonus = Math.min(5, streak - 1);
+ const prestigeInc = u.prestige * 15;
+
+ const credGain = 100 + streakBonus * 20 + prestigeInc;
+ const xpGain   = 25  + streakBonus * 10;
+ const hpGain   = 20  + u.prestige  * 5;
+
+ u.credits += credGain;
+ u.xp      += xpGain;
+ u.hp       = clamp(u.hp + hpGain, 0, CONFIG.MAX_HP);
+ u.energy   = clamp(u.energy + 10, 0, CONFIG.MAX_ENERGY);
+
+ const worldHint = WORLD.boss?.active
+   ? `\n⚠️ Active boss: ${WORLD.boss.name} — join the raid!`
+   : WORLD.chaos >= 50
+   ? `\n🔥 High chaos detected — risky but rewarding out there`
+   : "";
+
+ save();
+
+ const streakLine   = streak > 1 ? `\n🔥 Streak: Day ${streak} (+${streakBonus * 20} credits)` : "";
+ const prestigeLine = u.prestige > 0 ? `\n👑 Prestige Bonus: +${prestigeInc} credits` : "";
+
+ await reply(ctx,
+`🎁 DAILY REWARD
+
++${credGain} Credits
++${xpGain} XP
++${hpGain} HP
++10 Energy restored${streakLine}${prestigeLine}${worldHint}
+
+Come back tomorrow to keep your streak!`
+ );
+ await maybeResendMenu(ctx, u);
+});
+
+/* =========================================================
+  LEADERBOARD
+========================================================= */
+
+function leaderboardText() {
+ const top = Object.values(DB).sort((a, b) => b.xp - a.xp).slice(0, 10);
+ let msg   = "🏆 LEADERBOARD\n\n";
+ top.forEach((u, i) => {
+   const dead     = u.dead ? " 💀" : "";
+   const prestige = u.prestige > 0 ? ` ♻️${u.prestige}` : "";
+   msg += `${i + 1}. ${u.name}${dead}${prestige}  ⭐${level(u.xp)}  ${u.xp} XP\n`;
+ });
+
+ msg += "\n⚔ FACTION POWER\n\n";
+ const sorted = Object.entries(WORLD.factions).sort((a, b) => b[1] - a[1]);
+ sorted.forEach(([f, p]) => { msg += `${f}: ${p}\n`; });
+
+ const dominant = getDominantFaction();
+ if (dominant) msg += `\n👑 Dominant: ${dominant}\n(+10% rewards for ${dominant} members)`;
+
+ msg += `\n\n🔥 Chaos: ${WORLD.chaos}`;
+ msg += `\n🌍 Market: ${WORLD.marketState}`;
+ if (WORLD.boss?.active) msg += `\n🐋 Boss Active: ${WORLD.boss.name} HP:${WORLD.boss.hp}`;
+ return msg;
+}
+
+bot.action("leaderboard", async (ctx) => {
+ await ack(ctx);
+ await reply(ctx, leaderboardText());
+ const u = getUser(ctx.from.id, ctx);
+ await maybeResendMenu(ctx, u);
+});
+
+bot.command("leaderboard", (ctx) => reply(ctx, leaderboardText()));
+bot.command("top",         (ctx) => reply(ctx, leaderboardText()));
+
+/* =========================================================
+  BULLETIN BOARD
+========================================================= */
+
+function addBulletin(entry) {
+ if (!Array.isArray(WORLD.bulletin)) WORLD.bulletin = [];
+ WORLD.bulletin.unshift({ text: entry, ts: now() });
+ if (WORLD.bulletin.length > 20) WORLD.bulletin.length = 20;
+ save();
+}
+
+bot.command("bulletin", (ctx) => {
+ if (!Array.isArray(WORLD.bulletin) || !WORLD.bulletin.length) {
+   return reply(ctx, "📋 BULLETIN BOARD\n\nNo entries yet.");
+ }
+ const entries = WORLD.bulletin.slice(0, 5);
+ let msg = "📋 BULLETIN BOARD\n\n";
+ entries.forEach(e => {
+   const age = Math.floor((now() - e.ts) / 60000);
+   msg += `• ${e.text} (${age}m ago)\n`;
+ });
+ return reply(ctx, msg);
+});
+
+/* =========================================================
+  MENU COMMAND
+========================================================= */
+
+bot.command("menu", async (ctx) => {
+ const u = getUser(ctx.from.id, ctx);
+ if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
+ return home(ctx, u);
+});
+
+/* =========================================================
+  ADMIN
+========================================================= */
+
+bot.command("broadcast", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ const msg = ctx.message.text.replace("/broadcast", "").trim();
+ if (!msg) return reply(ctx, "Usage: /broadcast message");
+ broadcastFire(`📢 ADMIN ALERT\n\n${msg}`);
+ return reply(ctx, "✅ Broadcast queued");
+});
+
+bot.command("spawnboss", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ spawnBoss();
+ return reply(ctx, "🐋 Boss spawn initiated");
+});
+
+bot.command("chaos", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ const amount = parseInt(ctx.message.text.split(" ")[1]);
+ if (isNaN(amount)) return reply(ctx, "Usage: /chaos number");
+ WORLD.chaos = clamp(amount, 1, CONFIG.MAX_CHAOS);
+ save();
+ return reply(ctx, `🔥 Chaos set to ${amount}`);
+});
+
+bot.command("givecredits", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ const parts  = ctx.message.text.split(" ");
+ const target = parts[1];
+ const amount = parseInt(parts[2]);
+ if (!target || isNaN(amount)) return reply(ctx, "Usage: /givecredits <userId> <amount>");
+ const u = DB[target];
+ if (!u) return reply(ctx, "❌ User not found");
+ u.credits += amount;
+ save();
+ return reply(ctx, `✅ Gave ${amount} credits to ${u.name}`);
+});
+
+bot.command("resetwanted", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ const parts  = ctx.message.text.split(" ");
+ const target = parts[1];
+ const u      = DB[target];
+ if (!u) return reply(ctx, "❌ User not found");
+ u.wanted      = false;
+ u.wantedLevel = 0;
+ save();
+ return reply(ctx, `✅ Cleared wanted status for ${u.name}`);
+});
+
+bot.command("forcesave", (ctx) => {
+ if (!isAdmin(ctx.from.id)) return;
+ dirty = true;
+ forceSave();
+ return reply(ctx, "💾 Force save complete");
+});
+
+/* =========================================================
+  RANDOM WORLD EVENTS
+========================================================= */
+
+let worldEventLock = false;
+
+setInterval(() => {
+ if (worldEventLock) return;
+ if (Math.random() > 0.90) {
+   worldEventLock = true;
+   addChaos(1);
+
+   const dominant     = getDominantFaction();
+   const factionEvent = dominant ? rand([
+     `👑 ${dominant} faction tightens its grip on the chain.`,
+     `⚔ ${dominant} operatives spotted across all sectors.`,
+     `📊 ${dominant} dominance reshaping market conditions.`
+   ]) : null;
+
+   const eventMsg = factionEvent || rand([
+     "🌌 Market instability detected.",
+     "📉 A major token collapsed.",
+     "🐋 Whale fleets moving through sectors.",
+     "⚠ Illegal mining activity rising.",
+     "💀 Shadow hackers breached the chain.",
+     "🔥 Flash crash detected. Chaos rising.",
+     "🛸 Unknown entity entered the Yodlverse.",
+     "⚡ Power grid fluctuations detected across sectors.",
+     "🔐 Anonymous hacker leaked exchange wallet keys.",
+     "🧬 Faction insurgents spotted at the border."
+   ]);
+
+   broadcastFire(eventMsg);
+   addBulletin(eventMsg);
+
+   setTimeout(() => { worldEventLock = false; }, 30000);
+ }
+}, 120000);
+
+setInterval(() => {
+ if (WORLD.chaos >= 80)      WORLD.marketState = "crashing";
+ else if (WORLD.chaos >= 50) WORLD.marketState = "volatile";
+ else if (WORLD.chaos >= 25) WORLD.marketState = rand(["stable", "volatile"]);
+ else                        WORLD.marketState = rand(["stable", "bullish"]);
+ save();
+}, 300000);
+
+setInterval(() => {
+ if (WORLD.chaos > 5) {
+   WORLD.chaos = Math.max(5, WORLD.chaos - 1);
+   save();
+ }
+}, 600000);
+
+/* =========================================================
+  FALLBACK MESSAGE HANDLER
+========================================================= */
+
+bot.on("message", async (ctx) => {
+ if (!ctx.from) return;
+
+ const text      = ctx.message?.text || "";
+ const isPrivate = ctx.chat?.type === "private";
+
+ if (!isPrivate) {
+   const isGameCommand = text === "/game" || text.startsWith("/game@");
+   if (!isGameCommand) return;
+
+   const deepLink = hubPrivateLink(ctx.from.id, ctx);
+   return reply(ctx,
+     "🌌 FOMO YODLVERSE\n\nTap below to enter your private game session:",
+     Markup.inlineKeyboard([
+       [Markup.button.url("🎮 ENTER THE YODLVERSE", deepLink)]
+     ])
+   );
+ }
+
+ const u = getUser(ctx.from.id, ctx);
+
+ if (checkDeath(ctx, u)) {
+   return showDeadMenu(ctx, u);
+ }
+
+ const isEntryCommand = text.startsWith("/game") || text.startsWith("/start");
+ if (!isEntryCommand) {
+   await reply(ctx,
+     "🌌 FOMO YODLVERSE\n\nUse /start or /game to enter.",
+     Markup.inlineKeyboard([
+       [Markup.button.callback("🚀 START", "start_game")]
+     ])
+   );
+   if (u.registered && tickMessageCounter(u.id)) {
+     await reply(ctx, "🕹 Quick actions:", homeMenu(u.id, ctx));
+   }
+ }
+});
+
+/* =========================================================
+  /start HANDLER
+  FIX v2.5: All user states handled explicitly:
+  - Dead (post-reset or otherwise) → recovery menu
+  - Unregistered + session → show character selection (startOnboarding)
+  - Unregistered + no session → onboarding intro with START button
+  - Registered → welcome back + home
+  - Post-reset unregistered (registered=false) → same as new user
+  No path leads to a dead end.
+========================================================= */
+
+bot.start(async (ctx) => {
+
+ if (ctx.chat?.type === "private") {
+   const session = resolveSessionFromCtx(ctx);
+
+   if (session) {
+     const u = getUser(ctx.from.id, ctx);
+
+     // Dead player: show recovery immediately regardless of registration
+     if (checkDeath(ctx, u)) {
+       await reply(ctx, `💀 Welcome back, ${u.name || "player"}. You are currently dead.`);
+       return showDeadMenu(ctx, u);
+     }
+
+     // Unregistered (new or post-reset): show character selection
+     if (!u.registered) {
+       return startOnboarding(ctx, u);
+     } else {
+       await reply(ctx,
+         `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
+       );
+     }
+     return home(ctx, u);
+   }
+ }
+
+ // Group chat: direct to private
+ if (ctx.chat?.type !== "private") {
+   const botUsername = process.env.BOT_USERNAME || "YOUR_BOT_USERNAME_HERE";
+   return reply(ctx,
+     "🌌 FOMO YODLVERSE\n\nUse /game in the group to get your private entry link.",
+     Markup.inlineKeyboard([
+       [Markup.button.url("🎮 ENTER THE YODLVERSE", `https://t.me/${botUsername}`)]
+     ])
+   );
+ }
+
+ // Private chat, no session token
+ const u = getUser(ctx.from.id, ctx);
+
+ // Dead player check (covers post-reset dead=false, normal dead=true)
+ if (checkDeath(ctx, u)) {
+   await reply(ctx, `💀 Welcome back, ${u.name || "player"}. The Yodlverse remembers your end.`);
+   return showDeadMenu(ctx, u);
+ }
+
+ // Registered: go straight to home
+ if (u.registered) {
+   await reply(ctx,
+     `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
+   );
+   return home(ctx, u);
+ }
+
+ // Unregistered (new or post-reset): show onboarding intro
+ // START button leads to start_game which shows character selection
+ return reply(ctx,
+`🌌 FOMO YODLVERSE
+
+The Great Rugpull has destroyed civilization.
+The blockchain is a warzone of factions, whales, and Sith Lords.
+
+Your credits are all you have left.
+Press START to enter the Yodlverse.`,
+   Markup.inlineKeyboard([
+     [Markup.button.callback("🚀 START", "start_game")]
+   ])
+ );
+});
+
+/* =========================================================
+  /game HANDLER
+========================================================= */
+
+bot.command("game", async (ctx) => {
+
+ if (ctx.chat?.type !== "private") {
+   const deepLink = hubPrivateLink(ctx.from.id, ctx);
+   return reply(ctx,
+     "🌌 FOMO YODLVERSE\n\nTap below to enter your private game session:",
+     Markup.inlineKeyboard([
+       [Markup.button.url("🎮 ENTER THE YODLVERSE", deepLink)]
+     ])
+   );
+ }
+
+ const u = getUser(ctx.from.id, ctx);
+
+ if (checkDeath(ctx, u)) {
+   return showDeadMenu(ctx, u);
+ }
+
+ if (u.registered) {
+   await reply(ctx,
+     `👋 Welcome back, ${u.name}.\n⚔ ${u.faction} | ⭐ Level ${level(u.xp)} | ❤️ ${u.hp} HP`
+   );
+   return home(ctx, u);
+ }
+
+ return reply(ctx,
+`🌌 FOMO YODLVERSE
+
+The Great Rugpull has destroyed civilization.
+
+Press START to enter the Yodlverse.`,
+   Markup.inlineKeyboard([
+     [Markup.button.callback("🚀 START", "start_game")]
+   ])
+ );
+});
+
+/* =========================================================
+  START BUTTON HANDLER
+  FIX v2.5.1: Calls startOnboarding() which now shows the
+  character selection screen. This is the correct entry point
+  for all new and post-reset players.
+========================================================= */
+
+bot.action("start_game", async (ctx) => {
+ await ack(ctx);
+ if (ctx.chat?.type !== "private") return;
+
+ const u = getUser(ctx.from.id, ctx);
+
+ // Dead player: never let them start — show recovery
+ if (checkDeath(ctx, u)) {
+   return showDeadMenu(ctx, u);
+ }
+
+ // Post-reset or brand new: run character selection onboarding
+ if (!u.registered) {
+   return startOnboarding(ctx, u);
+ }
+
+ // Already registered: go to home
+ return home(ctx, u);
+});
+
+/* =========================================================
+  LAUNCH
+========================================================= */
+
+console.log("➡️ Launch call executed");
+bot.launch()
+ .then(() => console.log("🌌 FOMO YODLVERSE ONLINE"))
+ .catch(err => console.error("❌ Launch error:", err));
