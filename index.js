@@ -21,6 +21,15 @@
 *   was blocking them mid-flow, causing the infinite elimination
 *   loop. Both handlers now check _entryIntent === "onboarding"
 *   and skip the registration gate for that path only.
+* - FIX #4: start_game action now clears dead/deathTime on any
+*   unregistered user before calling startOnboarding. A post-reset
+*   user must never be in a dead state; if stale callbacks, a
+*   missed save flush, or an old button replay caused dead=true to
+*   persist on a freshly-reset (unregistered) record, start_game
+*   would route back to showDeadMenu and re-enter the elimination
+*   loop. The guard is intentionally narrow: it only fires when
+*   registered===false, so it has zero effect on living registered
+*   players or legitimately dead registered players.
 *
 * All v2.5.1 gameplay, balance, and architecture preserved.
 * =========================================================
@@ -2703,6 +2712,16 @@ Press START to enter the Yodlverse.`,
 
 /* =========================================================
   START BUTTON HANDLER
+  FIX #4: Clear dead state for unregistered users before routing
+  to startOnboarding. A post-reset user must never be in a dead
+  state — registered=false is the authoritative signal that this
+  is a fresh (or reset) account. If dead=true somehow persists on
+  an unregistered record (stale callback replay, missed save flush,
+  or any edge-case ordering issue), checkDeath would fire first and
+  loop the user back to the elimination screen indefinitely.
+  This guard is intentionally narrow: it only clears dead when
+  registered===false, so it has zero effect on living registered
+  players or legitimately dead registered players.
 ========================================================= */
 
 bot.action("start_game", async (ctx) => {
@@ -2710,6 +2729,18 @@ bot.action("start_game", async (ctx) => {
  if (ctx.chat?.type !== "private") return;
 
  const u = getUser(ctx.from.id, ctx);
+
+ // FIX #4: An unregistered user cannot be legitimately dead.
+ // registered=false means this is either a brand-new account or a
+ // fully reset one. In both cases dead must be false. If it is not,
+ // a stale state from before the reset is bleeding through — clear it
+ // here so the user reaches character creation instead of looping.
+ if (!u.registered && u.dead) {
+   u.dead      = false;
+   u.deathTime = null;
+   u.hp        = CONFIG.MAX_HP;
+   save();
+ }
 
  if (checkDeath(ctx, u)) {
    return showDeadMenu(ctx, u);
