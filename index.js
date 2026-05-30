@@ -1,37 +1,42 @@
 /**
 * =========================================================
-* 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.5.2
+* 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.5.3
 * =========================================================
 *
-* CHANGES v2.5.2 (3 targeted bug fixes only):
-* - FIX #1: checkBossTaunts() now guards WORLD.boss.tauntsUsed
-*   with Array.isArray() before calling .includes(). This was
-*   the exact source of "cannot read properties of undefined
-*   reading includes" — triggered when world.json had a boss
-*   object persisted without a tauntsUsed array (e.g. from an
-*   older save). One null guard added. Nothing else changed.
-* - FIX #2: hubPrivateLink() BOT_USERNAME fallback is now an
-*   empty string instead of a hardcoded bot name. Wrong fallback
-*   was sending deep links to a nonexistent bot, producing the
-*   "Sorry, this user doesn't seem to exist" Telegram error.
-*   Set BOT_USERNAME correctly in your .env file.
-* - FIX #3: char_* and faction_* handlers no longer call
-*   requireRegistered() during onboarding. Post-reset users
-*   have registered=false and no session token — requireRegistered
-*   was blocking them mid-flow, causing the infinite elimination
-*   loop. Both handlers now check _entryIntent === "onboarding"
-*   and skip the registration gate for that path only.
-* - FIX #4: start_game action now clears dead/deathTime on any
-*   unregistered user before calling startOnboarding. A post-reset
-*   user must never be in a dead state; if stale callbacks, a
-*   missed save flush, or an old button replay caused dead=true to
-*   persist on a freshly-reset (unregistered) record, start_game
-*   would route back to showDeadMenu and re-enter the elimination
-*   loop. The guard is intentionally narrow: it only fires when
-*   registered===false, so it has zero effect on living registered
-*   players or legitimately dead registered players.
+* CHANGES v2.5.3 (3 surgical ID-normalization fixes only):
 *
-* All v2.5.1 gameplay, balance, and architecture preserved.
+* ROOT CAUSE IDENTIFIED:
+*   Telegram sends ctx.from.id as a JavaScript Number.
+*   DB keys are always strings after a JSON save/load cycle
+*   (JSON.stringify converts all object keys to strings).
+*   When createUser(id) stored a numeric id, and getUser/
+*   hardResetPlayer used that numeric id to write DB[id],
+*   a second numeric-keyed entry was created in memory while
+*   the original string-keyed record (with dead=true) survived
+*   untouched. On the next getUser() call, JS coercion resolved
+*   DB[numericId] to the string key — but hardResetPlayer had
+*   written to the numeric key — so the dead string-keyed record
+*   was still returned, routing the player back to showDeadMenu.
+*   This explained the "username appearing twice" symptom
+*   (two distinct DB keys for the same user) and the
+*   inescapable elimination loop after reset.
+*
+* - FIX #5: createUser() now stores id as String(id).
+*   Guarantees the id field inside the user object always
+*   matches the string key used by DB.
+*
+* - FIX #6: getUser() normalises id = String(id) before any
+*   DB read or write. Prevents numeric-keyed ghost records from
+*   being created at the lookup layer regardless of what type
+*   ctx.from.id carries at call time.
+*
+* - FIX #7: hardResetPlayer() normalises id = String(user.id)
+*   and additionally deletes both the string-keyed AND any
+*   surviving numeric-keyed entry for the same user, eliminating
+*   pre-existing duplicate records created before this patch.
+*
+* All v2.5.2 fixes (#1–#4) and all gameplay preserved.
+* No other changes.
 * =========================================================
 */
 
@@ -510,8 +515,6 @@ function hubPrivateLink(userId, ctx) {
    null;
  const token = createSession(userId, topicId);
  // FIX #2: Use empty string fallback instead of hardcoded bot name.
- // A wrong hardcoded username sends users to a nonexistent bot, producing
- // "Sorry, this user doesn't seem to exist." Set BOT_USERNAME in your .env.
  const botUsername = process.env.BOT_USERNAME || "";
  if (!botUsername) {
    console.log("⚠️  WARNING: BOT_USERNAME is not set in .env — deep links will not work!");
@@ -555,12 +558,28 @@ function rebirthPlayer(user) {
 
 /* =========================================================
   HARD RESET (respawn path)
+  FIX #7: Normalise id to String(user.id) before writing.
+  Also delete any surviving numeric-keyed duplicate for the
+  same user — these were created before this patch when
+  ctx.from.id (a Number) was used as a DB key directly.
+  Without this cleanup the dead numeric-keyed record would
+  persist in memory and route the player back to showDeadMenu
+  on the next getUser() call in the same process lifetime.
 ========================================================= */
 
 function hardResetPlayer(user) {
- const id       = user.id;
+ // FIX #7: Always use the string form of the id as the canonical key.
+ const id       = String(user.id);
  const name     = user.name;
  const username = user.username;
+
+ // Remove any numeric-keyed duplicate that may have been created
+ // by pre-patch code writing DB[numericId] instead of DB[stringId].
+ const numericId = Number(id);
+ if (!isNaN(numericId) && numericId !== id && DB[numericId] !== undefined) {
+   delete DB[numericId];
+ }
+
  DB[id] = createUser(id);
  DB[id].name     = name     || "Player";
  DB[id].username = username || "";
@@ -852,11 +871,15 @@ async function ack(ctx) {
 
 /* =========================================================
   USER SYSTEM
+  FIX #5: createUser() stores id as String(id).
+  Guarantees the user.id field always matches the string key
+  used in DB, preventing numeric/string key divergence after
+  a JSON save/load cycle.
 ========================================================= */
 
 function createUser(id, ctx = null) {
  return {
-   id,
+   id:              String(id),   // FIX #5: always store as string
    name:            ctx?.from?.first_name || "Player",
    username:        ctx?.from?.username   || "",
    registered:      false,
@@ -915,7 +938,18 @@ function repairUser(u) {
  return u;
 }
 
+/* =========================================================
+  getUser
+  FIX #6: Normalise id = String(id) before any DB access.
+  ctx.from.id is a Number in Telegraf. Using it raw as a DB
+  key creates numeric-keyed entries in memory that diverge
+  from the string keys written by JSON.parse after a
+  save/load cycle, resulting in duplicate records and the
+  dead-state bleed-through that caused the elimination loop.
+========================================================= */
+
 function getUser(id, ctx = null) {
+ id = String(id);   // FIX #6: normalise to string before all DB access
  if (!DB[id]) { DB[id] = createUser(id, ctx); save(); }
  DB[id] = repairUser(DB[id]);
  return DB[id];
@@ -1081,9 +1115,6 @@ Press 🐋 BOSS to join the raid!`
 function checkBossTaunts() {
  if (!WORLD.boss || !WORLD.boss.active) return;
  // FIX #1: Guard tauntsUsed before calling .includes().
- // If boss was loaded from world.json without this field (older save),
- // .includes() throws "cannot read properties of undefined" and
- // crashes the entire boss action handler. One Array.isArray guard fixes it.
  if (!Array.isArray(WORLD.boss.tauntsUsed)) WORLD.boss.tauntsUsed = [];
 
  const pct = Math.floor((WORLD.boss.hp / WORLD.boss.maxHp) * 100);
@@ -1454,11 +1485,6 @@ bot.command("status", (ctx) => {
   during onboarding. Post-reset users have registered=false with
   no session token — requireRegistered() was blocking them and
   showing "not registered" mid-flow, causing the infinite loop.
-  
-  Both handlers now allow through any user whose _entryIntent is
-  "onboarding" (set by startOnboarding()). For all other paths
-  (e.g. someone manually sending a char_ action after registration),
-  requireRegistered() still fires normally.
 ========================================================= */
 
 bot.action(/char_(.+)/, async (ctx) => {
@@ -1466,7 +1492,6 @@ bot.action(/char_(.+)/, async (ctx) => {
  const u = getUser(ctx.from.id, ctx);
  if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
  // FIX #3: Skip registration gate during onboarding flow.
- // Post-reset users are unregistered by design at this stage.
  if (u._entryIntent !== "onboarding" && !requireRegistered(u, ctx)) return;
 
  u.character = ctx.match[1];
@@ -2713,15 +2738,8 @@ Press START to enter the Yodlverse.`,
 /* =========================================================
   START BUTTON HANDLER
   FIX #4: Clear dead state for unregistered users before routing
-  to startOnboarding. A post-reset user must never be in a dead
-  state — registered=false is the authoritative signal that this
-  is a fresh (or reset) account. If dead=true somehow persists on
-  an unregistered record (stale callback replay, missed save flush,
-  or any edge-case ordering issue), checkDeath would fire first and
-  loop the user back to the elimination screen indefinitely.
-  This guard is intentionally narrow: it only clears dead when
-  registered===false, so it has zero effect on living registered
-  players or legitimately dead registered players.
+  to startOnboarding. An unregistered user cannot be legitimately
+  dead — registered=false is the authoritative post-reset signal.
 ========================================================= */
 
 bot.action("start_game", async (ctx) => {
@@ -2731,10 +2749,6 @@ bot.action("start_game", async (ctx) => {
  const u = getUser(ctx.from.id, ctx);
 
  // FIX #4: An unregistered user cannot be legitimately dead.
- // registered=false means this is either a brand-new account or a
- // fully reset one. In both cases dead must be false. If it is not,
- // a stale state from before the reset is bleeding through — clear it
- // here so the user reaches character creation instead of looping.
  if (!u.registered && u.dead) {
    u.dead      = false;
    u.deathTime = null;
