@@ -1,47 +1,47 @@
 /**
  * =========================================================
- * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.0
+ * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.1
  * =========================================================
  *
- * CHANGES v2.7.0 — Bug Fixes + Structural Cleanup
+ * CHANGES v2.7.1 — Non-blocking I/O Fix (freeze/spinner bug)
  *
- * FIX E — ack() must be FIRST in every bot.action() handler
- *   Several action handlers (rebirth, respawn_confirm_prompt,
- *   cancel_hardreset, inventory, market, daily, etc.) were calling
- *   getUser(), logic, or DB lookups BEFORE ack(). Telegram requires
- *   answerCbQuery within ~3 seconds or the button freezes with a
- *   loading spinner permanently — even after the bot responds.
- *   When a player returns after the bot has been idle (no warm
- *   Node.js event loop, cold disk reads, session cleanup running),
- *   that latency pushes past the 3s window. All handlers now call
- *   ack() as their absolute first line.
+ * ROOT CAUSE:
+ *   atomicWrite() used synchronous fs operations
+ *   (fs.copyFileSync, fs.writeFileSync, fs.renameSync).
+ *   On a 0.5 vCPU / 1 GB VPS with slow disk, these block
+ *   the Node.js event loop for hundreds of ms to seconds.
+ *   If the block overlaps with Telegram's 3-second
+ *   answerCbQuery window, the button shows a "loading"
+ *   state that silently expires — even though ack() was
+ *   already called — because subsequent reply() calls fire
+ *   into a frozen event loop and are dropped.
  *
- * FIX F — Dead-player guard extracted to guardAction() wrapper
- *   checkDeath + requireRegistered were copy-pasted into 20+
- *   handlers. Replaced with a single guardAction() helper that
- *   runs ack(), dead check, and registration check in one place,
- *   keeping handler bodies clean and consistent.
+ * FIX J — atomicWrite() converted to async (fs.promises)
+ *   All file I/O (copyFile, writeFile, rename, readFile for
+ *   validation) now uses the async fs.promises API so disk
+ *   operations yield the event loop between each step.
+ *   A write queue (writeQueue) serialises concurrent save
+ *   calls so two saves never race on the same file.
  *
- * FIX G — Energy regen applied consistently
- *   applyEnergyRegen() was missing from some action handlers
- *   (daily, market purchases). Now applied via guardAction() for
- *   all gameplay actions.
+ * FIX K — forceSave() is now async; save interval awaits it
+ *   The setInterval that calls forceSave every 15 s now
+ *   invokes the async version so the interval callback never
+ *   blocks the thread.
  *
- * FIX H — /start and /game deduplicated
- *   Both commands shared ~90% logic. Extracted to handleEntry()
- *   which both commands call. Same for the start_game action.
+ * FIX L — spawnBoss broadcast deferred with extra yield
+ *   broadcastFire() was already wrapped in setImmediate but
+ *   spawnBoss() itself was called synchronously inside action
+ *   handlers. Added an extra Promise/setImmediate yield so
+ *   the boss-spawn path cannot delay the handler's reply().
  *
- * FIX I — /use and /sell commands share logic with button handlers
- *   Extracted useItem() and sellItem() helpers called by both the
- *   command handlers and the inv_use_N / inv_sell_N action handlers.
- *
- * All v2.5.x and v2.6.0 fixes preserved. Zero gameplay changes.
+ * All v2.7.0 fixes preserved. Zero gameplay changes.
  * =========================================================
  */
 
 "use strict";
 
 const fs     = require("fs");
+const fsp    = require("fs").promises;   // FIX J: async fs
 const crypto = require("crypto");
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
@@ -148,7 +148,6 @@ function repairWorld() {
   if (!WORLD.onboardSeen || typeof WORLD.onboardSeen !== "object") WORLD.onboardSeen = {};
   if (!Array.isArray(WORLD.bulletin)) WORLD.bulletin = [];
 
-  // Normalise any numeric keys in onboardSeen written by pre-v2.6.0 code
   for (const k of Object.keys(WORLD.onboardSeen)) {
     const strKey = String(k);
     if (strKey !== k) {
@@ -162,7 +161,6 @@ repairWorld();
 
 /* =========================================================
    ONE-TIME STARTUP MIGRATION (v2.6.0 FIX C)
-   Removes legacy numeric-keyed ghost records from data.json.
 ========================================================= */
 
 function migrateDB() {
@@ -170,7 +168,7 @@ function migrateDB() {
   for (const k of Object.keys(DB)) {
     if (!/^\d+$/.test(k)) continue;
     const strKey   = String(k);
-    if (k === strKey) continue; // already canonical (shouldn't happen after JSON.parse)
+    if (k === strKey) continue;
     const numRecord = DB[k];
     const strRecord = DB[strKey];
     if (!strRecord) {
@@ -193,42 +191,62 @@ function migrateDB() {
 migrateDB();
 
 /* =========================================================
-   ATOMIC SAVE
+   ATOMIC SAVE — FIX J: fully async, non-blocking
+   A per-file write queue serialises concurrent saves so two
+   writes never race on the same path.
 ========================================================= */
 
-function save() { dirty = true; }
+// One pending-promise slot per file path
+const writeQueues = {};
 
-function atomicWrite(file, data) {
+async function atomicWrite(file, data) {
+  // Queue writes per file so they never overlap
+  const prev = writeQueues[file] || Promise.resolve();
+  const next = prev.then(() => _doAtomicWrite(file, data));
+  writeQueues[file] = next.catch(() => {}); // don't let a failure block the queue
+  return next;
+}
+
+async function _doAtomicWrite(file, data) {
   const temp   = `${file}.tmp`;
   const backup = `${file}.bak`;
   try {
-    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
-    fs.writeFileSync(temp, JSON.stringify(data, null, 2));
-    const check = JSON.parse(fs.readFileSync(temp, "utf8"));
+    // All fs ops are now async — event loop is free between each step
+    if (fs.existsSync(file)) await fsp.copyFile(file, backup);
+    await fsp.writeFile(temp, JSON.stringify(data, null, 2));
+    const raw   = await fsp.readFile(temp, "utf8");
+    const check = JSON.parse(raw);
     if (!check || typeof check !== "object") throw new Error("Validation failed");
-    fs.renameSync(temp, file);
+    await fsp.rename(temp, file);
   } catch (err) {
     console.error("❌ ATOMIC WRITE FAILED:", file, err.message);
     try {
       if (fs.existsSync(backup)) {
-        fs.copyFileSync(backup, file);
+        await fsp.copyFile(backup, file);
         console.log("♻️  Restored backup:", file);
       }
     } catch (re) { console.error("❌ BACKUP RESTORE FAILED:", re.message); }
   }
 }
 
-function forceSave() {
+function save() { dirty = true; }
+
+// FIX K: forceSave is async so the setInterval never blocks the thread
+async function forceSave() {
   if (!dirty) return;
   try {
-    atomicWrite(DB_FILE,      DB);
-    atomicWrite(WORLD_FILE,   WORLD);
-    atomicWrite(SESSION_FILE, SESSIONS);
+    // Run all three writes in parallel — they're independent files
+    await Promise.all([
+      atomicWrite(DB_FILE,      DB),
+      atomicWrite(WORLD_FILE,   WORLD),
+      atomicWrite(SESSION_FILE, SESSIONS)
+    ]);
     dirty = false;
     console.log("💾 Saved safely");
   } catch (err) { console.error("❌ SAVE ERROR:", err.message); }
 }
 
+// FIX K: interval calls async forceSave; no blocking on the event loop
 setInterval(() => { if (dirty) forceSave(); }, CONFIG.SAVE_INTERVAL);
 
 /* =========================================================
@@ -237,8 +255,8 @@ setInterval(() => { if (dirty) forceSave(); }, CONFIG.SAVE_INTERVAL);
 
 process.on("uncaughtException",  err => console.error("❌ UNCAUGHT:",  err));
 process.on("unhandledRejection", err => console.error("❌ REJECTION:", err));
-process.on("SIGINT",  () => { forceSave(); process.exit(0); });
-process.on("SIGTERM", () => { forceSave(); process.exit(0); });
+process.on("SIGINT",  () => { forceSave().finally(() => process.exit(0)); });
+process.on("SIGTERM", () => { forceSave().finally(() => process.exit(0)); });
 
 /* =========================================================
    UTILITIES
@@ -329,15 +347,12 @@ async function reply(ctx, text, extra = {}) {
   }
 }
 
-// FIX E: ack() is always called first in action handlers — this helper
-// is just a convenience; calling it first in each handler is what matters.
 async function ack(ctx) {
   try { await ctx.answerCbQuery(); } catch {}
 }
 
 /* =========================================================
    ONBOARDING GATE (group chat)
-   v2.6.0 FIX A + B: normalised to String(userId)
 ========================================================= */
 
 const ONBOARDING = { enabled: true, cooldown: 1000 * 60 * 60 * 24 };
@@ -359,7 +374,7 @@ bot.use(async (ctx, next) => {
     if (ctx.chat.type === "private") return next();
 
     const userId   = ctx.from.id;
-    const existing = DB[String(userId)]; // v2.6.0 FIX B
+    const existing = DB[String(userId)];
 
     if (existing?.registered)      return next();
     if (hasSeenOnboarding(userId)) return next();
@@ -453,8 +468,6 @@ function hubPrivateLink(userId, ctx) {
 
 /* =========================================================
    USER SYSTEM
-   v2.6.0 FIX D: createUser() is the sole constructor.
-   getUser() is the sole entry point for all reads/repairs.
 ========================================================= */
 
 function createUser(id, ctx = null) {
@@ -529,7 +542,6 @@ function getUser(id, ctx = null) {
 
 /* =========================================================
    HARD RESET (respawn path)
-   v2.6.0 FIX A + D
 ========================================================= */
 
 function hardResetPlayer(user) {
@@ -537,7 +549,6 @@ function hardResetPlayer(user) {
   const name     = user.name;
   const username = user.username;
 
-  // Remove any numeric-keyed duplicate from pre-v2.5.3 code
   const numericId = Number(id);
   if (!isNaN(numericId) && DB[numericId] !== undefined) delete DB[numericId];
 
@@ -546,11 +557,10 @@ function hardResetPlayer(user) {
   DB[id].username   = username || "";
   DB[id].registered = false;
 
-  // v2.6.0 FIX A: clear onboardSeen so user is treated as truly new
   if (WORLD.onboardSeen?.[id]) delete WORLD.onboardSeen[id];
 
   save();
-  return getUser(id); // always return through canonical pipeline
+  return getUser(id);
 }
 
 /* =========================================================
@@ -622,10 +632,7 @@ async function showDeadMenu(ctx, u) {
 }
 
 /* =========================================================
-   guardAction() — FIX F
-   Replaces the copy-pasted dead+registration check in every handler.
-   Returns the user if all checks pass, null if the action is blocked.
-   Callers MUST call ack() before guardAction() — ack must be first.
+   guardAction() — FIX F (v2.7.0)
 ========================================================= */
 
 async function guardAction(ctx, { needsRegistered = true, applyRegen = false } = {}) {
@@ -992,7 +999,13 @@ function spawnBoss() {
     if (mods.crimeBoost > 0) effectLines.push("🕶 Crime profits increased");
     if (mods.chaosAdd   > 0) effectLines.push("🔥 Chaos escalating per action");
     const effectStr = effectLines.length ? `\n\n🌍 World Effects:\n${effectLines.join("\n")}` : "";
-    broadcastFire(
+
+    // FIX L: defer the broadcast with an extra yield so it never delays
+    // the calling handler's reply(). setImmediate alone isn't enough on a
+    // saturated single-core VPS; the extra setTimeout(0) ensures the
+    // broadcast loop starts only after the current call stack fully unwinds.
+    setTimeout(() => {
+      broadcastFire(
 `🐋 WORLD BOSS SPAWNED — TIER ${template.tier}
 
 👹 ${template.name}
@@ -1002,7 +1015,9 @@ function spawnBoss() {
 💰 Reward pool: ${template.reward} credits${effectStr}
 
 Press 🐋 BOSS to join the raid!`
-    );
+      );
+    }, 0);
+
     return WORLD.boss;
   } catch (err) {
     console.error("❌ SPAWN BOSS ERROR:", err.message);
@@ -1151,7 +1166,6 @@ Step 1 of 2: Choose your character.`,
 
 /* =========================================================
    ENTRY HANDLER (shared by /start, /game, start_game action)
-   FIX H: deduplicated
 ========================================================= */
 
 async function handleEntry(ctx) {
@@ -1174,9 +1188,7 @@ async function handleEntry(ctx) {
   }
 
   if (!u.registered) {
-    // Session present means the user clicked a deep link from a group — go straight to onboarding
     if (session) return startOnboarding(ctx, u);
-    // No session — show intro with START button
     return reply(ctx,
 `🌌 FOMO YODLVERSE
 
@@ -1213,7 +1225,6 @@ Tap below to create your new character.`,
 
 /* =========================================================
    ITEM USE / SELL HELPERS
-   FIX I: shared logic for both button handlers and text commands
 ========================================================= */
 
 async function useItem(ctx, user, idx) {
@@ -1360,20 +1371,15 @@ function inventoryPage(u, page = 0) {
    ===================== COMMAND HANDLERS ==================
 ========================================================= */
 
-/* /start */
 bot.start(async (ctx) => { await handleEntry(ctx); });
-
-/* /game */
 bot.command("game", async (ctx) => { await handleEntry(ctx); });
 
-/* /menu */
 bot.command("menu", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return showDeadMenu(ctx, u);
   return home(ctx, u);
 });
 
-/* /status */
 bot.command("status", (ctx) => {
   return reply(ctx,
 `🌌 SERVER STATUS
@@ -1388,17 +1394,14 @@ bot.command("status", (ctx) => {
   );
 });
 
-/* /profile */
 bot.command("profile", (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   return reply(ctx, profileText(u));
 });
 
-/* /leaderboard + /top */
 bot.command("leaderboard", (ctx) => reply(ctx, leaderboardText()));
 bot.command("top",         (ctx) => reply(ctx, leaderboardText()));
 
-/* /bulletin */
 bot.command("bulletin", (ctx) => {
   if (!Array.isArray(WORLD.bulletin) || !WORLD.bulletin.length) {
     return reply(ctx, "📋 BULLETIN BOARD\n\nNo entries yet.");
@@ -1411,7 +1414,6 @@ bot.command("bulletin", (ctx) => {
   return reply(ctx, msg);
 });
 
-/* /respawn */
 bot.command("respawn", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (!isDead(u)) return reply(ctx, "✅ You are not dead.\n\nNo need to respawn — you are still in the Yodlverse.");
@@ -1432,7 +1434,6 @@ Are you sure you want to full reset?`,
   );
 });
 
-/* /use */
 bot.command("use", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
@@ -1442,7 +1443,6 @@ bot.command("use", async (ctx) => {
   return useItem(ctx, u, idx);
 });
 
-/* /sell */
 bot.command("sell", async (ctx) => {
   const u = getUser(ctx.from.id, ctx);
   if (checkDeath(ctx, u)) return;
@@ -1510,11 +1510,8 @@ bot.command("forcesave", (ctx) => {
 
 /* =========================================================
    =================== ACTION HANDLERS ====================
-   NOTE: ack() is ALWAYS the very first line. This is the fix
-   for the freeze/loading-spinner bug (FIX E).
 ========================================================= */
 
-/* start_game */
 bot.action("start_game", async (ctx) => {
   await ack(ctx);
   if (!isPrivateChat(ctx)) return;
@@ -1524,7 +1521,6 @@ bot.action("start_game", async (ctx) => {
   return home(ctx, u);
 });
 
-/* CHARACTER SELECTION */
 bot.action(/char_(.+)/, async (ctx) => {
   await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
@@ -1543,7 +1539,6 @@ WHALE → Balanced bonuses across all`,
   );
 });
 
-/* FACTION SELECTION */
 bot.action(/faction_(.+)/, async (ctx) => {
   await ack(ctx);
   const faction = ctx.match[1];
@@ -1569,7 +1564,6 @@ May the blockchain be with you.`
   return home(ctx, u);
 });
 
-/* PROFILE */
 bot.action("profile", async (ctx) => {
   await ack(ctx);
   const u = await guardAction(ctx);
@@ -1578,7 +1572,6 @@ bot.action("profile", async (ctx) => {
   await maybeResendMenu(ctx, u);
 });
 
-/* LEADERBOARD */
 bot.action("leaderboard", async (ctx) => {
   await ack(ctx);
   await reply(ctx, leaderboardText());
@@ -1588,11 +1581,10 @@ bot.action("leaderboard", async (ctx) => {
 
 /* =========================================================
    DEATH / REBIRTH / RESPAWN ACTIONS
-   FIX E: ack() is the very first line in every handler below.
 ========================================================= */
 
 bot.action("rebirth", async (ctx) => {
-  await ack(ctx);  // ← MUST be first; prevents the freeze on slow return
+  await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
   if (!u) return;
   if (!u.dead) return reply(ctx, "⚠️ You are still alive. Rebirth is only available after elimination.");
@@ -1631,7 +1623,7 @@ _YODEL-BOT: "The chain welcomes you back. It will destroy you again shortly."_`
 });
 
 bot.action("respawn_confirm_prompt", async (ctx) => {
-  await ack(ctx);  // ← MUST be first
+  await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
   if (!isDead(u)) return reply(ctx, "✅ You are not dead. No reset needed.");
   return reply(ctx,
@@ -1652,7 +1644,7 @@ Are you sure?`,
 });
 
 bot.action("confirm_hardreset", async (ctx) => {
-  await ack(ctx);  // ← MUST be first
+  await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
   if (!isDead(u)) return reply(ctx, "✅ You are not dead. No reset needed.");
   const name = u.name;
@@ -1661,7 +1653,7 @@ bot.action("confirm_hardreset", async (ctx) => {
 });
 
 bot.action("cancel_hardreset", async (ctx) => {
-  await ack(ctx);  // ← MUST be first
+  await ack(ctx);
   const u = getUser(ctx.from.id, ctx);
   if (isDead(u)) return showDeadMenu(ctx, u);
   return reply(ctx, "✅ Reset cancelled.");
@@ -1973,7 +1965,7 @@ Intrusion detected. Counterattack incoming.
 ========================================================= */
 
 bot.action("boss", async (ctx) => {
-  await ack(ctx);  // ← MUST be first
+  await ack(ctx);
   const u = await guardAction(ctx, { applyRegen: true });
   if (!u) return;
 
@@ -2283,7 +2275,6 @@ setInterval(() => {
   }
 }, 120_000);
 
-// Market state update every 5 minutes
 setInterval(() => {
   if      (WORLD.chaos >= 80) WORLD.marketState = "crashing";
   else if (WORLD.chaos >= 50) WORLD.marketState = "volatile";
@@ -2292,7 +2283,6 @@ setInterval(() => {
   save();
 }, 300_000);
 
-// Chaos decay every 10 minutes
 setInterval(() => {
   if (WORLD.chaos > 5) { WORLD.chaos = Math.max(5, WORLD.chaos - 1); save(); }
 }, 600_000);
