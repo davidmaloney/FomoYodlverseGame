@@ -1,40 +1,52 @@
 /**
  * =========================================================
- * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.1
+ * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.2
  * =========================================================
  *
- * CHANGES v2.7.1 — Non-blocking I/O Fix (freeze/spinner bug)
+ * CHANGES v2.7.2 — Remaining spinner/hang fixes
  *
- * ROOT CAUSE:
- *   atomicWrite() used synchronous fs operations
- *   (fs.copyFileSync, fs.writeFileSync, fs.renameSync).
- *   On a 0.5 vCPU / 1 GB VPS with slow disk, these block
- *   the Node.js event loop for hundreds of ms to seconds.
- *   If the block overlaps with Telegram's 3-second
- *   answerCbQuery window, the button shows a "loading"
- *   state that silently expires — even though ack() was
- *   already called — because subsequent reply() calls fire
- *   into a frozen event loop and are dropped.
+ * All v2.7.1 fixes preserved. Zero gameplay changes.
  *
- * FIX J — atomicWrite() converted to async (fs.promises)
- *   All file I/O (copyFile, writeFile, rename, readFile for
- *   validation) now uses the async fs.promises API so disk
- *   operations yield the event loop between each step.
- *   A write queue (writeQueue) serialises concurrent save
- *   calls so two saves never race on the same file.
+ * ROOT CAUSES (remaining after v2.7.1):
  *
- * FIX K — forceSave() is now async; save interval awaits it
- *   The setInterval that calls forceSave every 15 s now
- *   invokes the async version so the interval callback never
- *   blocks the thread.
+ *   FIX M — addChaos() deferred spawnBoss()
+ *     addChaos() was calling spawnBoss() synchronously inside
+ *     every action handler (event, crime, war, hack, boss).
+ *     spawnBoss() does non-trivial work (object construction,
+ *     save(), setTimeout broadcast) all inline, potentially
+ *     delaying the handler's reply() past Telegram's 3-second
+ *     answerCbQuery window. spawnBoss() inside addChaos() is
+ *     now deferred with setImmediate so it runs after the
+ *     current handler completes its reply().
  *
- * FIX L — spawnBoss broadcast deferred with extra yield
- *   broadcastFire() was already wrapped in setImmediate but
- *   spawnBoss() itself was called synchronously inside action
- *   handlers. Added an extra Promise/setImmediate yield so
- *   the boss-spawn path cannot delay the handler's reply().
+ *   FIX N — faction_ handler: broadcastFire before reply()
+ *     In the faction_(.+) action, broadcastFire() and
+ *     addBulletin() were called BEFORE reply() and home().
+ *     broadcastFire() is non-blocking (setImmediate) but
+ *     addBulletin() called save() synchronously. Reordered
+ *     so reply/home fire first, then side-effects.
  *
- * All v2.7.0 fixes preserved. Zero gameplay changes.
+ *   FIX O — damageBoss() / checkBossTaunts() inline broadcast
+ *     checkBossTaunts() called broadcastFire() synchronously
+ *     from inside damageBoss(), which is called mid-handler
+ *     in the boss action before reply(). broadcastFire()
+ *     itself is already deferred, but the taunt array writes
+ *     and save() call still ran inline. Moved the save()
+ *     inside checkBossTaunts() to be deferred via setImmediate
+ *     so it doesn't block the calling handler.
+ *
+ *   FIX P — inv_use / inv_sell / inv_page missing guardAction
+ *     These handlers called getUser() directly, skipping the
+ *     dead-check and registration guard. A dead or unregistered
+ *     user clicking an inventory button would get no response
+ *     at all (silent hang from Telegram's perspective).
+ *     guardAction() added to all three handlers.
+ *
+ *   FIX Q — /forcesave admin command missing await
+ *     forceSave() is async but was called without await,
+ *     causing the "Force save complete" reply to fire before
+ *     the save actually finished. Minor correctness fix.
+ *
  * =========================================================
  */
 
@@ -737,10 +749,15 @@ function broadcastFire(message) {
    WORLD ENGINE
 ========================================================= */
 
+// FIX M: spawnBoss() deferred inside addChaos() so it never runs
+// synchronously inside an action handler before reply() is called.
 function addChaos(amount) {
   const bossMods = getBossWorldModifiers();
   WORLD.chaos    = clamp(WORLD.chaos + amount + bossMods.chaosAdd * 0.1, 1, CONFIG.MAX_CHAOS);
-  if (WORLD.chaos >= CONFIG.CHAOS_BOSS_TRIGGER && (!WORLD.boss || !WORLD.boss.active)) spawnBoss();
+  if (WORLD.chaos >= CONFIG.CHAOS_BOSS_TRIGGER && (!WORLD.boss || !WORLD.boss.active)) {
+    // Defer boss spawn so the calling handler can reply() first
+    setImmediate(() => spawnBoss());
+  }
   if      (WORLD.chaos >= 80) WORLD.marketState = "crashing";
   else if (WORLD.chaos >= 50) WORLD.marketState = "volatile";
   save();
@@ -1027,6 +1044,8 @@ Press 🐋 BOSS to join the raid!`
   }
 }
 
+// FIX O: save() inside checkBossTaunts deferred so it doesn't block
+// the boss action handler before reply() fires.
 function checkBossTaunts() {
   if (!WORLD.boss?.active) return;
   if (!Array.isArray(WORLD.boss.tauntsUsed)) WORLD.boss.tauntsUsed = [];
@@ -1037,7 +1056,8 @@ function checkBossTaunts() {
       const taunt = rand(BOSS_TAUNTS[threshold]);
       const phase = threshold <= 10 ? "FINAL" : threshold <= 33 ? "3" : "2";
       broadcastFire(`👹 ${WORLD.boss.name} — Phase ${phase}\n\n${taunt}`);
-      save();
+      // Defer save so it doesn't delay the calling handler's reply()
+      setImmediate(() => save());
       break;
     }
   }
@@ -1502,9 +1522,11 @@ bot.command("resetwanted", (ctx) => {
   return reply(ctx, `✅ Cleared wanted status for ${u.name}`);
 });
 
-bot.command("forcesave", (ctx) => {
+// FIX Q: await forceSave() so the reply fires after save completes
+bot.command("forcesave", async (ctx) => {
   if (!isAdmin(ctx.from.id)) return;
-  dirty = true; forceSave();
+  dirty = true;
+  await forceSave();
   return reply(ctx, "💾 Force save complete");
 });
 
@@ -1539,6 +1561,8 @@ WHALE → Balanced bonuses across all`,
   );
 });
 
+// FIX N: reply() and home() now fire BEFORE broadcastFire/addBulletin
+// so side-effects never delay the handler's response to Telegram.
 bot.action(/faction_(.+)/, async (ctx) => {
   await ack(ctx);
   const faction = ctx.match[1];
@@ -1550,8 +1574,6 @@ bot.action(/faction_(.+)/, async (ctx) => {
   u.registered   = true;
   u._entryIntent = null;
   save();
-  broadcastFire(`🌌 ${u.name} joined faction ${u.faction}`);
-  addBulletin(`${u.name} joined faction ${u.faction}`);
   await reply(ctx,
 `✅ Character created!
 
@@ -1561,7 +1583,12 @@ bot.action(/faction_(.+)/, async (ctx) => {
 You start with ${CONFIG.START_CREDITS} credits.
 May the blockchain be with you.`
   );
-  return home(ctx, u);
+  await home(ctx, u);
+  // Defer broadcast and bulletin so they never block the reply above
+  setImmediate(() => {
+    broadcastFire(`🌌 ${u.name} joined faction ${u.faction}`);
+    addBulletin(`${u.name} joined faction ${u.faction}`);
+  });
 });
 
 bot.action("profile", async (ctx) => {
@@ -2017,6 +2044,9 @@ ${bossLine}${drop}${contextualYodelBot(u, true)}`
 
 /* =========================================================
    INVENTORY
+   FIX P: guardAction() added to inv_use, inv_sell, inv_page
+   so dead/unregistered users always get a response instead
+   of silently hanging.
 ========================================================= */
 
 bot.action("inventory", async (ctx) => {
@@ -2030,26 +2060,27 @@ bot.action("inventory", async (ctx) => {
 
 bot.action(/inv_page_(\d+)/, async (ctx) => {
   await ack(ctx);
-  const u    = getUser(ctx.from.id, ctx);
+  const u    = await guardAction(ctx);
+  if (!u) return;
   const page = parseInt(ctx.match[1]);
-  if (!u || isNaN(page)) return;
+  if (isNaN(page)) return;
   const { text, keyboard } = inventoryPage(u, page);
   return reply(ctx, text, keyboard || {});
 });
 
 bot.action(/inv_use_(\d+)/, async (ctx) => {
   await ack(ctx);
-  const u   = getUser(ctx.from.id, ctx);
-  const idx = parseInt(ctx.match[1]);
+  const u   = await guardAction(ctx);
   if (!u) return;
+  const idx = parseInt(ctx.match[1]);
   return useItem(ctx, u, idx);
 });
 
 bot.action(/inv_sell_(\d+)/, async (ctx) => {
   await ack(ctx);
-  const u   = getUser(ctx.from.id, ctx);
-  const idx = parseInt(ctx.match[1]);
+  const u   = await guardAction(ctx);
   if (!u) return;
+  const idx = parseInt(ctx.match[1]);
   return sellItem(ctx, u, idx);
 });
 
