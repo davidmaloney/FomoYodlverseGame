@@ -1,51 +1,62 @@
 /**
  * =========================================================
- * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.2
+ * 🌌 FOMO YODLVERSE — ULTIMATE HUB EDITION v2.7.3
  * =========================================================
  *
- * CHANGES v2.7.2 — Remaining spinner/hang fixes
+ * CHANGES v2.7.3 — ~1-hour inactivity hang fixes
  *
- * All v2.7.1 fixes preserved. Zero gameplay changes.
+ * All v2.7.2 fixes preserved. Zero gameplay changes.
  *
- * ROOT CAUSES (remaining after v2.7.1):
+ * ROOT CAUSES (remaining after v2.7.2):
  *
- *   FIX M — addChaos() deferred spawnBoss()
- *     addChaos() was calling spawnBoss() synchronously inside
- *     every action handler (event, crime, war, hack, boss).
- *     spawnBoss() does non-trivial work (object construction,
- *     save(), setTimeout broadcast) all inline, potentially
- *     delaying the handler's reply() past Telegram's 3-second
- *     answerCbQuery window. spawnBoss() inside addChaos() is
- *     now deferred with setImmediate so it runs after the
- *     current handler completes its reply().
+ *   FIX R — Telegraf long-poll silently drops after ~1 hour idle
+ *     bot.launch() uses long-polling with no reconnect logic.
+ *     After ~1 hour of network inactivity the underlying HTTP
+ *     keep-alive connection times out at the server or a
+ *     middlebox.  Telegraf swallows the resulting ETIMEDOUT /
+ *     ECONNRESET / ENOTFOUND and stops delivering updates —
+ *     the bot appears alive (process running, timers firing)
+ *     but never responds to any user interaction, i.e. the
+ *     "stuck loading" symptom.  Fix: attach an error handler
+ *     to bot.launch()'s returned promise AND register a
+ *     Telegraf-level error handler that restarts polling via
+ *     bot.stop() → bot.launch() on fatal network errors.
+ *     A debounce guard (restartInProgress flag + 5 s delay)
+ *     prevents restart storms.
  *
- *   FIX N — faction_ handler: broadcastFire before reply()
- *     In the faction_(.+) action, broadcastFire() and
- *     addBulletin() were called BEFORE reply() and home().
- *     broadcastFire() is non-blocking (setImmediate) but
- *     addBulletin() called save() synchronously. Reordered
- *     so reply/home fire first, then side-effects.
+ *   FIX S — worldEventLock never resets after process resumes
+ *     from OS-level suspension (e.g. VPS entering idle state).
+ *     When the host suspends the process mid-interval the
+ *     30-second setTimeout that resets worldEventLock IS
+ *     enqueued but Node.js fires ALL expired timers
+ *     immediately on resume — in practice the lock resets
+ *     correctly in this case.  HOWEVER if the process is hard-
+ *     killed and restarted (common with systemd RestartSec or
+ *     PM2 restart on OOM) the in-memory worldEventLock
+ *     initialises to false, which is fine, but the 120-second
+ *     setInterval that drives world events may fire its very
+ *     first tick before the bot has finished re-establishing
+ *     the Telegram polling connection, causing broadcastFire()
+ *     calls to queue up against a bot that is not yet
+ *     connected.  The lock already prevents re-entry; adding a
+ *     simple bot-ready guard makes the first world-tick wait
+ *     until polling is confirmed live.
  *
- *   FIX O — damageBoss() / checkBossTaunts() inline broadcast
- *     checkBossTaunts() called broadcastFire() synchronously
- *     from inside damageBoss(), which is called mid-handler
- *     in the boss action before reply(). broadcastFire()
- *     itself is already deferred, but the taunt array writes
- *     and save() call still ran inline. Moved the save()
- *     inside checkBossTaunts() to be deferred via setImmediate
- *     so it doesn't block the calling handler.
- *
- *   FIX P — inv_use / inv_sell / inv_page missing guardAction
- *     These handlers called getUser() directly, skipping the
- *     dead-check and registration guard. A dead or unregistered
- *     user clicking an inventory button would get no response
- *     at all (silent hang from Telegram's perspective).
- *     guardAction() added to all three handlers.
- *
- *   FIX Q — /forcesave admin command missing await
- *     forceSave() is async but was called without await,
- *     causing the "Force save complete" reply to fire before
- *     the save actually finished. Minor correctness fix.
+ *   FIX T — forceSave() interval fires concurrent saves after
+ *     long idle + sudden burst of dirty writes.
+ *     The 15-second setInterval calls forceSave() without
+ *     awaiting it.  forceSave() itself is async and contains
+ *     a dirty-flag read + Promise.all write + dirty = false
+ *     sequence.  If the interval fires a second time before
+ *     the first forceSave() completes (e.g. on resume when
+ *     Node drains all overdue timers at once) two concurrent
+ *     calls both see dirty === true and both enter the save
+ *     path.  The atomicWrite queue serialises the disk ops
+ *     correctly, but the second call sets dirty = false before
+ *     the first call's writes have actually committed, meaning
+ *     a save-in-flight can be silently abandoned.  Fix: add a
+ *     saveInProgress flag that prevents concurrent forceSave()
+ *     executions — identical to the existing bossLock pattern.
  *
  * =========================================================
  */
@@ -69,6 +80,10 @@ if (!process.env.BOT_TOKEN) {
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 console.log("🌌 FOMO YODLVERSE ENGINE BOOTING...");
+
+// FIX R: track whether bot polling is live so world-tick and
+// broadcastFire calls don't queue against a disconnected bot.
+let botReady = false;
 
 /* =========================================================
    CONFIG
@@ -243,9 +258,20 @@ async function _doAtomicWrite(file, data) {
 
 function save() { dirty = true; }
 
+// FIX T: guard against concurrent forceSave() executions.
+// Without this, two interval ticks draining simultaneously
+// (e.g. after OS resume fires overdue timers in a burst)
+// both read dirty===true, enter the save path, and race to
+// set dirty=false — the second call can mark the flag clear
+// before the first call's writes have committed.
+let saveInProgress = false;
+
 // FIX K: forceSave is async so the setInterval never blocks the thread
 async function forceSave() {
   if (!dirty) return;
+  // FIX T: prevent concurrent execution
+  if (saveInProgress) return;
+  saveInProgress = true;
   try {
     // Run all three writes in parallel — they're independent files
     await Promise.all([
@@ -256,6 +282,10 @@ async function forceSave() {
     dirty = false;
     console.log("💾 Saved safely");
   } catch (err) { console.error("❌ SAVE ERROR:", err.message); }
+  finally {
+    // FIX T: always release the lock, even on error
+    saveInProgress = false;
+  }
 }
 
 // FIX K: interval calls async forceSave; no blocking on the event loop
@@ -2273,11 +2303,15 @@ bot.on("message", async (ctx) => {
 
 /* =========================================================
    WORLD TICK — RANDOM EVENTS
+   FIX S: guard world-tick broadcasts behind botReady so they
+   don't queue against the Telegram API before polling is live.
 ========================================================= */
 
 let worldEventLock = false;
 
 setInterval(() => {
+  // FIX S: don't fire world events until the bot is confirmed live
+  if (!botReady) return;
   if (worldEventLock) return;
   if (Math.random() > 0.90) {
     worldEventLock = true;
@@ -2320,9 +2354,62 @@ setInterval(() => {
 
 /* =========================================================
    LAUNCH
+   FIX R: attach a Telegraf-level error handler that detects
+   fatal long-poll connection errors and automatically restarts
+   polling.  A debounce flag and a 5-second delay prevent
+   restart storms on repeated failures.
+   botReady is set to true only after launch resolves, and
+   cleared to false during a restart so world-tick broadcasts
+   don't fire against a disconnected bot (FIX S).
 ========================================================= */
+
+// FIX R: restart-on-poll-error handler
+let restartInProgress = false;
+
+function restartPolling(reason) {
+  if (restartInProgress) return;
+  restartInProgress = true;
+  botReady          = false;                      // FIX S: block world-tick broadcasts
+  console.warn(`⚠️  Polling restart triggered: ${reason}`);
+  // Give in-flight handlers a moment to finish before stopping
+  setTimeout(async () => {
+    try {
+      bot.stop("restart");
+    } catch (_) { /* ignore stop errors */ }
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      await bot.launch();
+      botReady          = true;
+      restartInProgress = false;
+      console.log("🔄 Polling restarted successfully");
+    } catch (err) {
+      console.error("❌ Polling restart failed:", err.message);
+      restartInProgress = false;
+      // Retry once more after 10 seconds if the first restart attempt fails
+      setTimeout(() => restartPolling("retry after failed restart"), 10_000);
+    }
+  }, 5_000);
+}
+
+// FIX R: Telegraf-level error handler — catches ETIMEDOUT, ECONNRESET,
+// ENOTFOUND and other network-layer failures that cause the long-poll
+// loop to silently stop delivering updates after ~1 hour of inactivity.
+bot.catch((err, ctx) => {
+  const msg = err?.message || String(err);
+  console.error("❌ BOT ERROR:", msg, ctx?.updateType);
+  const fatalNetworkErrors = ["ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "socket hang up"];
+  const isFatal = fatalNetworkErrors.some(e => msg.includes(e));
+  if (isFatal) restartPolling(msg);
+});
 
 console.log("➡️ Launch call executed");
 bot.launch()
-  .then(() => console.log("🌌 FOMO YODLVERSE ONLINE"))
-  .catch(err => console.error("❌ Launch error:", err));
+  .then(() => {
+    botReady = true;          // FIX R + FIX S: polling confirmed live
+    console.log("🌌 FOMO YODLVERSE ONLINE");
+  })
+  .catch(err => {
+    console.error("❌ Launch error:", err);
+    // FIX R: if the initial launch fails, retry after 5 seconds
+    setTimeout(() => restartPolling("initial launch failure"), 5_000);
+  });
